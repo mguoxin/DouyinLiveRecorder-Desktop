@@ -2,6 +2,10 @@
 
 基于 Python 3.12 + PySide6 Widgets + SQLite 的轻量级 Windows 桌面应用。
 
+当前版本：**0.1.0**（Git Tag `v0.1.0`）。正式发布包：
+`release\DouyinLiveRecorder-0.1.0-win64.zip`，解压后直接运行 `DouyinLiveRecorder.exe`
+（onedir 便携版，内置 FFmpeg）。发布验收详情见 [RELEASE_REPORT_0.1.0.md](docs/RELEASE_REPORT_0.1.0.md)。
+
 ## 当前实现状态
 
 已实现并通过自动化测试（离线）：
@@ -120,6 +124,10 @@ PyInstaller 6.22.3 已安装到项目虚拟环境，构建命令：
 
 产物：`dist\DouyinLiveRecorder\DouyinLiveRecorder.exe`（onedir，无控制台窗口）。
 
+正式发布包：`release\DouyinLiveRecorder-0.1.0-win64.zip`（约 75MB，解压后约 199MB）。
+包内包含程序本体、内置 FFmpeg、README、`THIRD_PARTY_NOTICES.txt` 与 FFmpeg 许可文件；
+不包含开发环境、测试产物、数据库或任何用户数据。校验和见 `release\SHA256SUMS.txt`。
+
 已验证（2026-11-16，本开发机）：
 
 - 从临时工作目录启动成功，自动创建 `data\app.db` 与 `data\logs\app.log`；
@@ -148,7 +156,7 @@ PyInstaller 6.22.3 已安装到项目虚拟环境，构建命令：
 
 ## 版本变更记录
 
-### 0.1.0（2026-11-17，候选交付版本）
+### 0.1.0（2026-11-18，正式发布版本）
 
 - 修复：打包程序从不同工作目录启动时会在别处新建空数据库；现固定使用 EXE 所在目录，并支持 `DLR_DATA_DIR` 覆盖。
 - 修复：数据目录不可写或数据库损坏导致启动失败时，给出可读提示并返回退出码 4，不再无声退出。

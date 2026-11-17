@@ -1,0 +1,38 @@
+DouyinLiveRecorder-Desktop 第三方组件与许可说明
+
+本程序（DouyinLiveRecorder-Desktop 0.1.0）以 Windows onedir 形式分发，随包包含或运行时
+使用以下第三方组件。各组件的版权与许可归其各自权利人所有。
+
+1. Python 运行时
+   - 组件：Python 3.12
+   - 许可：Python Software Foundation License
+   - 说明：程序由 PyInstaller 打包，运行时库位于 _internal\ 目录。
+   - 来源：https://www.python.org/
+
+2. PySide6 / Qt 6
+   - 组件：PySide6、Qt 6（GUI 框架）
+   - 许可：LGPLv3（Qt 以动态链接方式随程序分发，_internal\ 下的 DLL 可被替换）
+   - 来源：https://www.qt.io/qt-6/lgpl  /  https://pypi.org/project/PySide6/
+   - 许可文本：https://www.gnu.org/licenses/lgpl-3.0.html
+
+3. FFmpeg
+   - 组件：FFmpeg 9.0.2（gyan.dev essentials build，GPL v3 构建）
+   - 许可：GPL v3
+   - 随包位置：_internal\ffmpeg\bin\ffmpeg.exe
+   - 许可文本：licenses\FFmpeg-LICENSE.txt
+   - 构建说明：licenses\FFmpeg-README.txt
+   - 对应源码：https://github.com/FFmpeg/FFmpeg/commit/946fcce07b
+   - 来源：https://www.gyan.dev/ffmpeg/builds/
+   - 说明：本程序通过独立子进程调用 FFmpeg，不修改 FFmpeg 源码。
+
+4. SQLite
+   - 组件：SQLite（通过 Python 标准库 sqlite3 使用）
+   - 许可：Public Domain
+   - 来源：https://www.sqlite.org/
+
+5. 其他 Python 标准库
+   - 许可：Python Software Foundation License
+   - 说明：urllib、asyncio、logging、subprocess 等均随 Python 分发。
+
+本文件仅作组件清单与许可指引，不构成法律意见。正式对外分发前，建议由项目所有者结合
+实际分发方式完成许可合规复核。
