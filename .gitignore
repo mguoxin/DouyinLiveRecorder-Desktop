@@ -1,0 +1,36 @@
+# Python 运行环境与缓存
+.venv/
+.venv-acceptance/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# 打包产物（发布包另行生成，不入库）
+dist/
+release/
+build/pyinstaller/
+
+# 内置 FFmpeg 可执行文件（约 100MB，超出常规托管限制；版本与校验和见 docs/RELEASE_REPORT_0.1.0.md）
+tools/ffmpeg/bin/*.exe
+
+# 运行时用户数据（数据库、录制文件、日志）
+data/
+
+# 验收与测试产物
+acceptance/
+_test_artifacts/
+.screenshots/
+
+# 本地探测环境
+_probe_gui/
+
+# 日志与临时文件
+*.log
+*.tmp
+
+# 编辑器与系统文件
+.idea/
+.vscode/
+Thumbs.db
+Desktop.ini
