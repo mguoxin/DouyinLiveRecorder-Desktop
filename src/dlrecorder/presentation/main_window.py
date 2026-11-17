@@ -29,6 +29,7 @@ from .. import __version__
 from ..application.monitor_service import MonitorService
 from ..application.recording_service import RecordingService
 from ..application.settings_service import AppSettings, SettingsService
+from ..domain.models import validate_web_rid
 from ..infrastructure.backup import prepare_restore, verify_sqlite
 from ..infrastructure.db import Database
 from .widgets import (
@@ -171,13 +172,24 @@ class MainWindow(QMainWindow):
 
     # ---------- 槽函数 ----------
     def _on_add_room(self) -> None:
-        web_rid, ok = QInputDialog.getText(self, "添加直播间", "直播间 ID (web_rid):")
-        if not ok or not web_rid.strip():
+        text, ok = QInputDialog.getText(
+            self,
+            "添加直播间",
+            "直播间链接或 ID（例如 https://live.douyin.com/123456）:",
+        )
+        if not ok or not text.strip():
+            return
+        try:
+            web_rid = validate_web_rid(text)
+        except ValueError as e:
+            QMessageBox.warning(self, "无法添加直播间", str(e))
             return
         name, ok2 = QInputDialog.getText(self, "添加直播间", "显示名称（可选）:")
-        room_id = self._service.add_room(web_rid.strip(), name.strip() if ok2 else "")
+        room_id = self._service.add_room(web_rid, name.strip() if ok2 else "")
         if room_id is None:
-            QMessageBox.warning(self, "错误", "添加房间失败，可能 ID 已存在。")
+            QMessageBox.warning(
+                self, "添加失败", f"无法添加直播间 {web_rid}，可能已存在。"
+            )
 
     def _on_edit_room(self) -> None:
         room_id = self.room_list.selected_room_id()

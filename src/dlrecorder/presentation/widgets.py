@@ -251,7 +251,7 @@ class RoomEditDialog(QDialog):
         self.error_label.hide()
 
         form = QFormLayout(self)
-        form.addRow("直播间 ID", self.web_rid_edit)
+        form.addRow("直播间 ID 或链接", self.web_rid_edit)
         form.addRow("显示名称", self.name_edit)
         form.addRow(self.error_label)
 

@@ -6,10 +6,11 @@
 
 ## 0. 版本
 
-- 当前版本：**0.1.0**（`src/dlrecorder/__init__.py`、`pyproject.toml`）。
+- 当前版本：**0.1.1**（`src/dlrecorder/__init__.py`、`pyproject.toml`）。
 - 版本号会写入窗口标题与启动日志 `应用初始化，版本=...`，用于核对打包程序与源码一致。
-- 源码基线：已初始化 Git 仓库，正式发布标签 **`v0.1.0`**；发布提交可用
-  `git rev-parse v0.1.0^{commit}` 查询。详细构建与产物信息见 `docs/RELEASE_REPORT_0.1.0.md`。
+- 源码基线：已初始化 Git 仓库，正式发布标签 **`v0.1.1`**（上一版 `v0.1.0` 保持不变）；发布提交可用
+  `git rev-parse v0.1.1^{commit}` 查询。详细构建与产物信息见 `docs/RELEASE_REPORT_0.1.1.md`，
+  0.1.0 记录见 `docs/RELEASE_REPORT_0.1.0.md`。
 - 仓库不跟踪 `.venv`、`_probe_gui`、`_test_artifacts`、`acceptance`、`data`、`dist`、`release`
   与 `tools/ffmpeg/bin/*.exe`（FFmpeg 版本与校验和记录在发布报告中）。
 
@@ -92,6 +93,10 @@
 
 ## 6. 测试结果
 
+- 完整回归：**209 passed**（2026-11-18 0.1.1 修复，离线 29.39s）。
+  - 0.1.1 新增 4 项链接输入回归：
+    `test_validate_web_rid_accepts_live_urls`、`test_validate_web_rid_short_link_gives_actionable_hint`、
+    `test_add_room_accepts_full_live_url`、`test_update_room_accepts_full_live_url`。
 - 完整回归：**205 passed**（2026-11-17 交付前审查，离线 31.78s）。
   基线 197 项全部保留；新增 8 项：
   - `test_default_base_dir_uses_executable_when_frozen` / `test_default_base_dir_prefers_data_dir_override` /
@@ -201,17 +206,38 @@
 - 交付物范围：运行时只需 `dist\DouyinLiveRecorder\`（含 `_internal`）与 `README.md`、`docs\`；
   工作区中的 `.venv`、`_probe_gui`、`_test_artifacts`、`.screenshots`、`acceptance`、`data\gui_screenshot.png`
   等为开发/验证产物，不应随交付包分发。
-- 正式发布（2026-11-18）：
+- 正式发布（2026-11-18，v0.1.1 缺陷修复）：
+  - 缺陷：用户粘贴完整直播间链接时被输入校验拒绝，无法添加房间（0.1.0 只接受纯 `web_rid`）。
+  - 修复：添加/编辑直播间支持链接并自动提取 `web_rid`；短链接给出明确提示；非法输入提示具体原因。
+  - 构建：`dist\DouyinLiveRecorder\`，构建时间 2026-11-18 01:18:26；启动日志确认 `版本=0.1.1`。
+  - 发布包：`release\DouyinLiveRecorder-0.1.1-win64.zip`（78,596,201 字节 / 74.95MB，
+    解压约 199.07MB / 172 文件），SHA-256
+    `758DA354FA3FA8E0ED2C454065A1FDF724F91F50E60184C354A507D7A5DFA72A`。
+  - 验收：完整回归 209 passed；GUI 冒烟 40 条采样、峰值 97.13MB、增长 4.32MB、CPU 平均 0.01%、
+    退出码 0；干净环境从 `%TEMP%` 目录启动退出码 0，数据仍写入 EXE 同级 `data\`。
+  - 标签：`v0.1.1`；`v0.1.0` 源码、Tag 与发布包均保持不变。
+  - 详细记录见 `docs\RELEASE_REPORT_0.1.1.md`。
+- 正式发布（2026-11-18，v0.1.0）：
   - 源码基线：Git 仓库已建立，发布标签 `v0.1.0`。
   - 正式构建：`dist\DouyinLiveRecorder\`，构建时间 2026-11-18 00:12:43，与 Git 标签指向源码一致。
   - 发布包：`release\DouyinLiveRecorder-0.1.0-win64.zip`（74.95MB，解压约 199MB），
     校验和见 `release\SHA256SUMS.txt`。
   - 发布验收：完整回归 205 passed；正式构建 GUI 冒烟 8 条采样、峰值 96.57MB、增长 2.56MB、
     CPU 平均 0.72%、退出码 0；发布目录启动/关闭冒烟退出码 0；内置 FFmpeg 正常加载。
-- 结论：0.1.0 已完成正式构建、验收、打包与版本归档，具备发布条件；
-  **唯一未验证项是低配机器（i3 / 4GB）真机验收，按所有者决定暂缓，不构成本次发布阻断条件**。
+- 结论：0.1.1 已完成缺陷修复、构建、验收、打包与版本归档，具备发布条件；
+  **低配机器（i3 / 4GB）真机验收仍未执行，不得视为通过**。
 
 ## 10. 版本变更记录
+
+### 0.1.1（2026-11-18，缺陷修复版本）
+
+- 修复：添加/编辑直播间时可直接粘贴抖音直播间链接，程序自动提取 `web_rid`
+  （支持 `live.douyin.com/<数字>`、`www.douyin.com/root/live/<数字>` 及含链接的整段分享文案）。
+  原因是 0.1.0 的输入校验只接受纯 ID，用户粘贴链接会在解析前被拒绝（日志为“添加房间参数非法”）。
+- 改进：手机端短链接（`v.douyin.com/...`）给出明确提示，说明需在浏览器打开后复制长链接。
+- 改进：非法输入直接提示具体原因，不再统一提示“可能 ID 已存在”。
+- 改进：添加/编辑对话框标签改为“直播间 ID 或链接”。
+- 验证：完整回归 209 passed（新增 4 项链接输入回归）。
 
 ### 0.1.0（2026-11-18，正式发布版本）
 

@@ -14,6 +14,7 @@ import pytest
 from PySide6.QtWidgets import QApplication
 
 from dlrecorder.application.app import Application
+from dlrecorder.domain.models import validate_web_rid
 from dlrecorder.domain.states import ParseResult
 from dlrecorder.infrastructure.db import Database
 
@@ -261,6 +262,50 @@ def test_add_room_rejects_invalid_web_rid(app):
     assert app.service.add_room("") is None
     assert app.service.add_room("a" * 65) is None
     assert app.service.get_rooms() == []
+
+
+def test_validate_web_rid_accepts_live_urls():
+    assert validate_web_rid("https://live.douyin.com/95694179922") == "95694179922"
+    assert (
+        validate_web_rid("live.douyin.com/95694179922?enter_from=web") == "95694179922"
+    )
+    assert (
+        validate_web_rid("https://www.douyin.com/root/live/95694179922")
+        == "95694179922"
+    )
+    assert validate_web_rid("  95694179922  ") == "95694179922"
+    assert (
+        validate_web_rid(
+            "7- 复制打开抖音，看看直播间 https://live.douyin.com/123456789 复制此链接"
+        )
+        == "123456789"
+    )
+
+
+def test_validate_web_rid_short_link_gives_actionable_hint():
+    with pytest.raises(ValueError, match="v.douyin.com"):
+        validate_web_rid("https://v.douyin.com/iRNBho6u/")
+    with pytest.raises(ValueError, match="无法从链接中识别直播间 ID"):
+        validate_web_rid("https://example.com/room/123")
+
+
+def test_add_room_accepts_full_live_url(app):
+    room_id = app.service.add_room("https://live.douyin.com/95694179922", "链接添加")
+
+    assert room_id is not None
+    assert app.db.get_room(room_id).web_rid == "95694179922"
+    assert app.service.get_room(room_id).web_rid == "95694179922"
+
+
+def test_update_room_accepts_full_live_url(app):
+    room_id = app.service.add_room("old-rid", "旧名称")
+
+    ok, error = app.service.update_room(
+        room_id, web_rid="https://live.douyin.com/95694179922"
+    )
+
+    assert ok is True and error == ""
+    assert app.db.get_room(room_id).web_rid == "95694179922"
 
 
 def test_update_room_persists_and_refreshes_list(app):

@@ -2,9 +2,10 @@
 
 基于 Python 3.12 + PySide6 Widgets + SQLite 的轻量级 Windows 桌面应用。
 
-当前版本：**0.1.0**（Git Tag `v0.1.0`）。正式发布包：
-`release\DouyinLiveRecorder-0.1.0-win64.zip`，解压后直接运行 `DouyinLiveRecorder.exe`
-（onedir 便携版，内置 FFmpeg）。发布验收详情见 [RELEASE_REPORT_0.1.0.md](docs/RELEASE_REPORT_0.1.0.md)。
+当前版本：**0.1.1**（Git Tag `v0.1.1`）。正式发布包：
+`release\DouyinLiveRecorder-0.1.1-win64.zip`，解压后直接运行 `DouyinLiveRecorder.exe`
+（onedir 便携版，内置 FFmpeg）。发布验收详情见 [RELEASE_REPORT_0.1.1.md](docs/RELEASE_REPORT_0.1.1.md)，
+0.1.0 的完整发布记录见 [RELEASE_REPORT_0.1.0.md](docs/RELEASE_REPORT_0.1.0.md)。
 
 ## 当前实现状态
 
@@ -81,12 +82,13 @@
 .venv\Scripts\python.exe -m pytest -q
 ```
 
-当前回归：**205 passed**。测试默认 `DLR_PARSER=mock`，不发起真实抖音请求；
+当前回归：**209 passed**。测试默认 `DLR_PARSER=mock`，不发起真实抖音请求；
 其中真实 FFmpeg 测试使用项目内置 FFmpeg 与本地生成媒体/本地限速 HTTP 流。
 
 交付前审查新增 8 项回归：打包数据目录定位（EXE 同级 / `DLR_DATA_DIR` / 源码 cwd）、
 启动失败提示与退出码、监控按钮以后台实际状态为准、无法确认 FFmpeg 退出时不得记为完成、
-WAL 存在时安全副本仍包含已提交数据。
+WAL 存在时安全副本仍包含已提交数据。0.1.1 新增 4 项链接输入回归：
+完整链接/分享文案提取、短链接提示、按链接添加房间、按链接修改房间。
 
 开发验证工具：
 
@@ -124,7 +126,7 @@ PyInstaller 6.22.3 已安装到项目虚拟环境，构建命令：
 
 产物：`dist\DouyinLiveRecorder\DouyinLiveRecorder.exe`（onedir，无控制台窗口）。
 
-正式发布包：`release\DouyinLiveRecorder-0.1.0-win64.zip`（约 75MB，解压后约 199MB）。
+正式发布包：`release\DouyinLiveRecorder-0.1.1-win64.zip`（约 75MB，解压后约 199MB）。
 包内包含程序本体、内置 FFmpeg、README、`THIRD_PARTY_NOTICES.txt` 与 FFmpeg 许可文件；
 不包含开发环境、测试产物、数据库或任何用户数据。校验和见 `release\SHA256SUMS.txt`。
 
@@ -155,6 +157,15 @@ PyInstaller 6.22.3 已安装到项目虚拟环境，构建命令：
 判定通过。窗口标题与启动日志都会显示版本号，便于核对运行的是哪一版。
 
 ## 版本变更记录
+
+### 0.1.1（2026-11-18，缺陷修复版本）
+
+- 修复：添加/编辑直播间时可直接粘贴抖音直播间链接，程序自动提取 `web_rid`
+  （支持 `live.douyin.com/<数字>`、`www.douyin.com/root/live/<数字>` 及含链接的整段分享文案）。
+- 改进：手机端短链接（`v.douyin.com/...`）给出明确提示，说明需在浏览器打开后复制长链接。
+- 改进：输入非法时直接提示具体原因，不再统一提示“可能 ID 已存在”。
+- 改进：添加/编辑对话框标签改为“直播间 ID 或链接”。
+- 验证：完整回归 209 passed（新增 4 项链接输入回归）。
 
 ### 0.1.0（2026-11-18，正式发布版本）
 
