@@ -19,6 +19,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional, Sequence
 
+from .winproc import KillOnCloseJob
+
 logger = logging.getLogger(__name__)
 
 DEFAULT_STOP_GRACE_S = 5.0
@@ -200,6 +202,7 @@ class FFmpegProcess:
         cwd: Optional[Path] = None,
         stop_grace_s: float = DEFAULT_STOP_GRACE_S,
         kill_grace_s: float = DEFAULT_KILL_GRACE_S,
+        job: Optional[KillOnCloseJob] = None,
     ) -> None:
         if not command:
             raise ValueError("command 不能为空")
@@ -207,6 +210,7 @@ class FFmpegProcess:
         self._cwd = str(cwd) if cwd is not None else None
         self._stop_grace_s = max(0.0, stop_grace_s)
         self._kill_grace_s = max(0.0, kill_grace_s)
+        self._job = job
         self._proc: Optional[subprocess.Popen] = None
 
     @property
@@ -232,6 +236,9 @@ class FFmpegProcess:
             cwd=self._cwd,
             creationflags=_CREATE_NO_WINDOW,
         )
+        # 加入 Job Object：应用被强制结束时由系统一并终止，避免孤儿进程。
+        if self._job is not None:
+            self._job.assign(self._proc.pid)
         logger.info("FFmpeg 已启动 pid=%s", self._proc.pid)
 
     def poll(self) -> Optional[int]:

@@ -20,7 +20,7 @@ import threading
 import time
 import uuid
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Optional, Sequence
 
@@ -35,6 +35,9 @@ from ..infrastructure.ffmpeg import (
     build_record_command,
     file_size,
 )
+from ..infrastructure.orphan import cleanup_orphans
+from ..infrastructure.process_registry import ProcessRecord, ProcessRegistry
+from ..infrastructure.winproc import KillOnCloseJob, query_process
 
 logger = logging.getLogger(__name__)
 
@@ -121,6 +124,8 @@ class RecordingService(QObject):
         stop_grace_s: float = DEFAULT_STOP_GRACE_S,
         shutdown_timeout_s: float = DEFAULT_SHUTDOWN_TIMEOUT_S,
         recover_interrupted: bool = True,
+        process_registry: Optional[ProcessRegistry] = None,
+        cleanup_orphans_on_start: bool = True,
         parent: Optional[QObject] = None,
     ) -> None:
         super().__init__(parent)
@@ -140,6 +145,10 @@ class RecordingService(QObject):
         self._stall_timeout_s = max(0.0, stall_timeout_s)
         self._stop_grace_s = max(0.0, stop_grace_s)
         self._shutdown_timeout_s = max(0.1, shutdown_timeout_s)
+        self._registry = process_registry
+        # Job Object 让 FFmpeg 在应用被强制结束时随进程句柄关闭而终止；
+        # 进程登记表是第二道防线，两者都不改变正常录制流程。
+        self._job = KillOnCloseJob() if process_registry is not None else None
 
         self._output_error = ""
         try:
@@ -153,6 +162,8 @@ class RecordingService(QObject):
         self._active_lock = threading.Lock()
         self._shutdown_lock = threading.Lock()
         self._shutdown_report: Optional[RecordingShutdownReport] = None
+        if self._registry is not None and cleanup_orphans_on_start:
+            self._cleanup_orphans()
         if recover_interrupted:
             recovered = self.recover_interrupted_recordings()
             if recovered:
@@ -246,6 +257,61 @@ class RecordingService(QObject):
                 logger.exception("恢复遗留录制记录失败 id=%s", row.get("id"))
         return recovered
 
+    def _cleanup_orphans(self) -> None:
+        """启动时清理上次异常退出遗留的 FFmpeg 进程。"""
+        try:
+            report = cleanup_orphans(self._registry)
+        except Exception:  # noqa: BLE001 - 清理失败不应阻断启动
+            logger.exception("检查遗留 FFmpeg 进程失败，已跳过清理")
+            return
+        if report.checked == 0:
+            return
+        logger.warning(
+            "遗留 FFmpeg 检查: 登记=%s 已终止=%s 跳过=%s 未终止=%s",
+            report.checked,
+            len(report.terminated),
+            report.skipped,
+            len(report.failed),
+        )
+        for record in report.terminated:
+            size = file_size(Path(record.file_path)) if record.file_path else 0
+            try:
+                self._db.interrupt_recording(record.recording_id, size)
+            except Exception:  # noqa: BLE001 - 单条记录失败不影响其他记录
+                logger.exception(
+                    "标记遗留录制记录失败 recording_id=%s", record.recording_id
+                )
+
+    def _register_process(self, active: "_ActiveRecording") -> None:
+        """把刚启动的 FFmpeg 写入进程登记表。"""
+        if self._registry is None or active.process is None:
+            return
+        pid = active.process.pid
+        if not pid:
+            return
+        identity = query_process(pid)
+        record = ProcessRecord(
+            pid=pid,
+            create_time=identity.create_time if identity is not None else 0,
+            exe_path=identity.exe_path if identity is not None else self._ffmpeg_path,
+            recording_id=active.recording_id,
+            room_id=active.room_id,
+            file_path=str(active.file_path),
+            started_at=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        )
+        try:
+            self._registry.add(record)
+        except Exception:  # noqa: BLE001 - 登记失败不影响录制
+            logger.exception("写入 FFmpeg 进程登记表失败 pid=%s", pid)
+
+    def _unregister_process(self, recording_id: int) -> None:
+        if self._registry is None:
+            return
+        try:
+            self._registry.remove(recording_id=recording_id)
+        except Exception:  # noqa: BLE001
+            logger.exception("移除 FFmpeg 进程登记失败 recording_id=%s", recording_id)
+
     def shutdown(self) -> RecordingShutdownReport:
         """停止全部录制并等待管理线程退出（幂等）。"""
         with self._shutdown_lock:
@@ -265,6 +331,9 @@ class RecordingService(QObject):
             self._shutdown_report = RecordingShutdownReport(
                 thread_exited=exited, remaining_active=remaining
             )
+            # 关闭 Job 句柄：极端情况下仍有子进程存活时，系统会一并终止。
+            if self._job is not None:
+                self._job.close()
             return self._shutdown_report
 
     # ---------- 管理线程 ----------
@@ -348,7 +417,9 @@ class RecordingService(QObject):
         command = self._command_builder(
             self._ffmpeg_path, stream_url, output_path
         )
-        process = FFmpegProcess(command, stop_grace_s=self._stop_grace_s)
+        process = FFmpegProcess(
+            command, stop_grace_s=self._stop_grace_s, job=self._job
+        )
         try:
             process.start()
         except OSError as e:
@@ -371,6 +442,7 @@ class RecordingService(QObject):
         )
         with self._active_lock:
             self._active[room_id] = active
+        self._register_process(active)
         logger.info(
             "开始录制 room_id=%s recording_id=%s file=%s",
             room_id,
@@ -637,7 +709,9 @@ class RecordingService(QObject):
 
         try:
             command = self._command_builder(self._ffmpeg_path, stream_url, output_path)
-            process = FFmpegProcess(command, stop_grace_s=self._stop_grace_s)
+            process = FFmpegProcess(
+                command, stop_grace_s=self._stop_grace_s, job=self._job
+            )
             process.start()
         except (OSError, ValueError) as e:
             logger.error("续录 FFmpeg 启动失败 room_id=%s: %s", active.room_id, e)
@@ -657,6 +731,7 @@ class RecordingService(QObject):
         active.display_name = room.display_name
         active.last_size = 0
         active.last_growth_at = time.monotonic()
+        self._register_process(active)
         logger.info(
             "自动续录已启动 room_id=%s attempt=%s recording_id=%s file=%s",
             active.room_id,
@@ -797,6 +872,7 @@ class RecordingService(QObject):
             logger.exception("更新录制记录失败 recording_id=%s", active.recording_id)
             self._emit_error(active.room_id, f"更新录制记录失败: {e}")
 
+        self._unregister_process(active.recording_id)
         if active.process is not None:
             active.process.close_streams()
         self.recording_finished.emit(

@@ -23,6 +23,7 @@ from ..infrastructure.config import AppConfig
 from ..infrastructure.db import Database
 from ..infrastructure.http_client import UrllibHttpClient
 from ..infrastructure.logging_config import setup_logging
+from ..infrastructure.process_registry import ProcessRegistry
 from ..presentation.main_window import MainWindow
 from .monitor_service import MonitorService
 from .recording_service import RecordingService, StreamRefresh
@@ -114,6 +115,11 @@ class Application:
         options.setdefault("min_free_mb", float(current.min_free_mb))
         options.setdefault("session_id_provider", self.service.get_session_id)
         options.setdefault("stream_resolver", self._refresh_stream)
+        # 进程登记表用于识别并清理异常退出遗留的 FFmpeg 子进程。
+        self.process_registry = ProcessRegistry(
+            self.config.data_dir / "runtime" / "ffmpeg_processes.json"
+        )
+        options.setdefault("process_registry", self.process_registry)
         self.recording = RecordingService(self.db, **options)
         self._auto_record = self.db.get_setting(AUTO_RECORD_SETTING, "0") == "1"
         self._auto_pending: set[int] = set()

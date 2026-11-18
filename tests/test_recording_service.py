@@ -319,9 +319,58 @@ def test_recovery_marks_legacy_recording_interrupted(tmp_path, qt_app):
         db.close()
 
 
+def test_process_registry_tracks_active_segment(env, qt_app):
+    from dlrecorder.infrastructure.process_registry import ProcessRegistry
+
+    registry = ProcessRegistry(env.tmp_path / "runtime" / "ffmpeg_processes.json")
+    service = env.service(process_registry=registry, cleanup_orphans_on_start=False)
+    started: list[dict] = []
+    service.recording_started.connect(lambda rid, snap: started.append(snap))
+
+    service.start_recording(env.room_id, "https://example.invalid/live.flv")
+    _wait_for(qt_app, lambda: bool(started))
+
+    entries = registry.entries()
+    assert [e.recording_id for e in entries] == [started[0]["recording_id"]]
+    assert entries[0].pid > 0
+
+    service.stop_recording(env.room_id)
+    _wait_for(qt_app, lambda: not service.is_recording(env.room_id))
+    _wait_for(qt_app, lambda: registry.entries() == [])
+
+
+def test_startup_clears_stale_registry_entries(tmp_path, qt_app):
+    from dlrecorder.infrastructure.process_registry import ProcessRecord, ProcessRegistry
+
+    db = Database(tmp_path / "app.db")
+    db.add_room("rec-room", "录制主播")
+    registry = ProcessRegistry(tmp_path / "reg.json")
+    registry.add(
+        ProcessRecord(
+            pid=999999,
+            create_time=1,
+            exe_path=str(tmp_path / "ffmpeg.exe"),
+            recording_id=999,
+            room_id=1,
+            file_path=str(tmp_path / "missing.ts"),
+            started_at="2026-11-18T10:00:00Z",
+        )
+    )
+    service = RecordingService(
+        db,
+        output_dir=tmp_path / "recordings",
+        process_registry=registry,
+        poll_interval_s=0.05,
+    )
+    try:
+        assert registry.entries() == []
+    finally:
+        service.shutdown()
+        db.close()
+
+
 def _live_resolver(url: str = "https://example.invalid/resumed.flv"):
     return lambda web_rid: StreamRefresh(live=True, stream_url=url)
-
 
 def test_unexpected_exit_is_resumed_with_new_file(env, qt_app):
     service = env.service(
