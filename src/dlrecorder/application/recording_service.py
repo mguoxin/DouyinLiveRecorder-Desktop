@@ -534,42 +534,65 @@ class RecordingService(QObject):
                     active.file_path,
                 )
                 report = active.process.stop()
-                self._finalize(
-                    active,
-                    exit_code=report.exit_code,
-                    requested=True,
-                    error=(
-                        "输出文件长时间未增长"
-                        + (
-                            ""
-                            if report.exited
-                            else "；FFmpeg 未能确认退出，进程可能仍在写入"
-                        )
-                    ),
-                )
+                stalled = "输出文件长时间未增长"
+                if not report.exited:
+                    # 无法确认进程退出时不得续录，否则同一路径可能被两个进程写入。
+                    self._finalize(
+                        active,
+                        exit_code=report.exit_code,
+                        requested=True,
+                        error=stalled + "；FFmpeg 未能确认退出，进程可能仍在写入",
+                    )
+                elif self._has_retry_budget(active):
+                    # 长时间无数据多为网络中断：结束该分段并重新解析续录，
+                    # 避免一次网络故障导致整场直播录制中止。
+                    self._begin_reconnect(
+                        active, report.exit_code, reason=stalled + "，正在自动续录"
+                    )
+                else:
+                    self._finalize(
+                        active,
+                        exit_code=report.exit_code,
+                        requested=True,
+                        error=stalled,
+                    )
 
     # ---------- 自动续录 ----------
-    def _can_retry(self, active: _ActiveRecording, exit_code: Optional[int]) -> bool:
-        """仅对非零异常退出且仍有重试预算的分段尝试续录。
-
-        退出码 0 视为直播自然结束，不续录，避免把已结束的直播反复拉起。
-        """
+    def _has_retry_budget(self, active: _ActiveRecording) -> bool:
         return (
             self._stream_resolver is not None
             and self._reconnect_max_attempts > 0
-            and exit_code not in (0, None)
             and active.attempts < self._reconnect_max_attempts
         )
+
+    def _can_retry(self, active: _ActiveRecording, exit_code: Optional[int]) -> bool:
+        """仅对非零异常退出且仍有重试预算的分段尝试续录。
+
+        退出码 0 视为直播自然结束，不在此处续录；但退出码 0 也可能来自网络
+        中断造成的提前 EOF，因此由 ``_clean_exit_outcome`` 重新解析后决定。
+        """
+        return self._has_retry_budget(active) and exit_code not in (0, None)
 
     def _retry_delay(self, attempt: int) -> float:
         index = min(max(1, attempt), len(self._reconnect_delays_s)) - 1
         return self._reconnect_delays_s[index]
 
     def _handle_exit(self, active: _ActiveRecording, exit_code: int) -> None:
+        if exit_code == 0:
+            outcome = self._clean_exit_outcome(active)
+            if outcome == "live":
+                self._begin_reconnect(active, exit_code)
+                return
+            if outcome == "unknown":
+                logger.warning(
+                    "FFmpeg 正常退出但无法确认直播状态，按网络异常重试 room_id=%s",
+                    active.room_id,
+                )
+                self._begin_reconnect(
+                    active, exit_code, reason="无法确认直播状态（网络异常），正在自动续录"
+                )
+                return
         if self._can_retry(active, exit_code):
-            self._begin_reconnect(active, exit_code)
-            return
-        if exit_code == 0 and self._confirmed_live_after_clean_exit(active):
             self._begin_reconnect(active, exit_code)
             return
         error = ""
@@ -585,18 +608,17 @@ class RecordingService(QObject):
             )
         self._finalize(active, exit_code=exit_code, requested=False, error=error)
 
-    def _confirmed_live_after_clean_exit(self, active: _ActiveRecording) -> bool:
-        """退出码 0 也可能是网络 EOF 造成的提前结束，需确认直播是否仍在进行。
+    def _clean_exit_outcome(self, active: _ActiveRecording) -> str:
+        """退出码 0 后确认直播状态，返回 ``live`` / ``offline`` / ``unknown``。
 
-        仅在重新解析明确返回"直播中且有地址"时按中断续录；真实下播、解析失败或
-        无法确认时保持原行为（按完成收尾），避免直播结束后反复重试。
+        退出码 0 也可能是网络中断造成的提前 EOF，必须重新解析确认：
+        - 明确直播中且有地址：按中断续录；
+        - 明确已下播：按完成收尾，避免直播结束后反复拉起；
+        - 无法确认（网络失败、风控等）：按异常重试，受续录次数预算约束。
+        没有解析器或预算已用完时保持原有行为（按完成收尾）。
         """
-        if (
-            self._stream_resolver is None
-            or self._reconnect_max_attempts <= 0
-            or active.attempts >= self._reconnect_max_attempts
-        ):
-            return False
+        if not self._has_retry_budget(active):
+            return "offline"
         refresh = self._resolve_stream(active)
         if refresh.live is True and refresh.stream_url:
             logger.warning(
@@ -604,10 +626,14 @@ class RecordingService(QObject):
                 active.room_id,
             )
             active.pending_stream_url = refresh.stream_url
-            return True
-        return False
+            return "live"
+        if refresh.live is False:
+            return "offline"
+        return "unknown"
 
-    def _begin_reconnect(self, active: _ActiveRecording, exit_code: int) -> None:
+    def _begin_reconnect(
+        self, active: _ActiveRecording, exit_code: Optional[int], *, reason: str = ""
+    ) -> None:
         """结束当前分段并安排在退避后重新解析、续录。"""
         logger.warning(
             "录制异常退出，准备自动续录 room_id=%s exit=%s attempts=%s/%s",
@@ -616,11 +642,12 @@ class RecordingService(QObject):
             active.attempts + 1,
             self._reconnect_max_attempts,
         )
+        message = reason or f"FFmpeg 退出码 {exit_code}，正在自动续录"
         self._close_segment(
             active,
             exit_code=exit_code,
             requested=False,
-            error=f"FFmpeg 退出码 {exit_code}，正在自动续录",
+            error=message,
         )
         active.process = None
         active.attempts += 1
@@ -634,7 +661,7 @@ class RecordingService(QObject):
                 "max_attempts": self._reconnect_max_attempts,
                 "delay_s": delay,
                 "exit_code": exit_code,
-                "error": f"FFmpeg 退出码 {exit_code}",
+                "error": reason or f"FFmpeg 退出码 {exit_code}",
             },
         )
 

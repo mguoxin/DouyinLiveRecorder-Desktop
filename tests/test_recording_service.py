@@ -18,22 +18,27 @@ with open(path, "wb") as f:
     if mode != "empty":
         f.write(b"x" * 8192)
         f.flush()
+runs = 0
 if counter:
-    runs = 0
     if os.path.exists(counter):
         with open(counter, encoding="utf-8") as c:
             runs = len(c.read())
     with open(counter, "a", encoding="utf-8") as c:
         c.write("x")
-    if ":" in mode and runs < int(mode.split(":", 1)[1]):
-        sys.exit(3)
-if mode == "exit3":
-    sys.exit(3)
-if mode.startswith("clean:") and runs < int(mode.split(":", 1)[1]):
-    sys.exit(0)
-if mode in ("sleep", "stall") or mode.startswith("clean:"):
+if mode.startswith("clean:"):
+    # 前 N 次以退出码 0 提前结束（模拟网络 EOF），之后保持运行等待停止。
+    if runs < int(mode.split(":", 1)[1]):
+        sys.exit(0)
     time.sleep(30)
-if mode == "stdin" or mode.startswith("flaky:"):
+elif mode.startswith("flaky:"):
+    if runs < int(mode.split(":", 1)[1]):
+        sys.exit(3)
+    sys.stdin.readline()
+elif mode == "exit3":
+    sys.exit(3)
+elif mode in ("sleep", "stall"):
+    time.sleep(30)
+elif mode == "stdin":
     sys.stdin.readline()
 """
 
@@ -452,6 +457,95 @@ def test_clean_exit_while_offline_stays_completed(env, qt_app):
     assert len(started) == 1
     assert finished[0]["status"] == "completed"
     assert service.is_recording(env.room_id) is False
+    assert env.db.list_recordings(status="recording") == []
+
+
+def test_clean_exit_with_unknown_status_is_retried(env, qt_app):
+    """退出码 0 但重新解析无法确认直播状态（网络异常）时，按异常重试并续录。"""
+    calls = {"n": 0}
+
+    def flaky_resolver(web_rid):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return StreamRefresh(live=None, error="网络请求失败")
+        return StreamRefresh(live=True, stream_url="https://example.invalid/resumed.flv")
+
+    service = env.service(
+        "clean:1",
+        stream_resolver=flaky_resolver,
+        reconnect_delays_s=(0.05,),
+        poll_interval_s=0.03,
+    )
+    started: list[dict] = []
+    finished: list[dict] = []
+    reconnecting: list[dict] = []
+    service.recording_started.connect(lambda rid, snap: started.append(snap))
+    service.recording_finished.connect(lambda rid, snap: finished.append(snap))
+    service.recording_reconnecting.connect(lambda rid, snap: reconnecting.append(snap))
+
+    service.start_recording(env.room_id, "https://example.invalid/live.flv")
+    _wait_for(qt_app, lambda: len(started) == 2, timeout=15)
+
+    assert started[1]["resumed"] is True
+    assert reconnecting[0]["attempt"] == 1
+    assert finished[0]["status"] == "failed"
+    assert "无法确认直播状态" in finished[0]["error"]
+    assert service.is_recording(env.room_id) is True
+
+
+def test_unknown_status_retry_is_bounded(env, qt_app):
+    """无法确认直播状态时的重试同样受预算约束，不会无限续录。"""
+    service = env.service(
+        "clean:99",
+        stream_resolver=lambda web_rid: StreamRefresh(live=None, error="网络请求失败"),
+        reconnect_max_attempts=1,
+        reconnect_delays_s=(0.02,),
+        poll_interval_s=0.03,
+    )
+    started: list[dict] = []
+    finished: list[dict] = []
+    service.recording_started.connect(lambda rid, snap: started.append(snap))
+    service.recording_finished.connect(lambda rid, snap: finished.append(snap))
+
+    service.start_recording(env.room_id, "https://example.invalid/live.flv")
+    _wait_for(qt_app, lambda: not service.is_recording(env.room_id), timeout=20)
+    time.sleep(0.3)
+    qt_app.processEvents()
+
+    assert len(started) == 1
+    assert finished[0]["status"] == "failed"
+    assert "无法确认直播状态" in finished[0]["error"]
+    assert finished[-1]["status"] == "failed"
+    assert "已尝试 1 次" in finished[-1]["error"]
+    assert env.db.list_recordings(status="recording") == []
+
+
+def test_stalled_output_resumes_after_stop(env, qt_app):
+    """输出长时间不增长时，在该进程确认退出后续录，而不是直接结束整场录制。"""
+    service = env.service(
+        "stall",
+        stream_resolver=_live_resolver(),
+        reconnect_max_attempts=1,
+        reconnect_delays_s=(0.02,),
+        poll_interval_s=0.03,
+        stall_timeout_s=0.2,
+    )
+    started: list[dict] = []
+    finished: list[dict] = []
+    reconnecting: list[dict] = []
+    service.recording_started.connect(lambda rid, snap: started.append(snap))
+    service.recording_finished.connect(lambda rid, snap: finished.append(snap))
+    service.recording_reconnecting.connect(lambda rid, snap: reconnecting.append(snap))
+
+    service.start_recording(env.room_id, "https://example.invalid/live.flv")
+    _wait_for(qt_app, lambda: len(started) == 2, timeout=20)
+    _wait_for(qt_app, lambda: not service.is_recording(env.room_id), timeout=25)
+
+    assert started[1]["resumed"] is True
+    assert reconnecting[0]["attempt"] == 1
+    assert "长时间未增长" in reconnecting[0]["error"]
+    # 第二次分段同样无增长且预算已用完：如实标记失败，不留 recording 记录。
+    assert finished[-1]["status"] == "failed"
     assert env.db.list_recordings(status="recording") == []
 
 
