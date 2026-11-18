@@ -28,3 +28,7 @@ def setup_logging(log_dir: Path, level: int = logging.INFO) -> None:
     ch.setFormatter(fmt)
     ch.setLevel(logging.WARNING)  # 控制台只输出警告及以上
     root.addHandler(ch)
+    # 第三方 HTTP 客户端默认按 INFO 记录完整请求 URL（含签名参数），
+    # 对排查无用且会撑大日志，统一降到 WARNING。
+    for noisy in ("httpx", "httpcore", "h2"):
+        logging.getLogger(noisy).setLevel(logging.WARNING)

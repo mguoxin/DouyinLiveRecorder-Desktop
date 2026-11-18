@@ -6,23 +6,24 @@
 
 ## 0. 版本
 
-- 当前版本：**0.1.1**（`src/dlrecorder/__init__.py`、`pyproject.toml`）。
+- 当前版本：**0.2.0**（`src/dlrecorder/__init__.py`、`pyproject.toml`），技术基线切换版本。
 - 版本号会写入窗口标题与启动日志 `应用初始化，版本=...`，用于核对打包程序与源码一致。
-- 源码基线：已初始化 Git 仓库，正式发布标签 **`v0.1.1`**（上一版 `v0.1.0` 保持不变）；发布提交可用
-  `git rev-parse v0.1.1^{commit}` 查询。详细构建与产物信息见 `docs/RELEASE_REPORT_0.1.1.md`，
-  0.1.0 记录见 `docs/RELEASE_REPORT_0.1.0.md`。
+- 源码基线：已初始化 Git 仓库，正式发布标签 **`v0.1.1`**（`v0.1.0` 保持不变）；0.1.2 已冻结但未打标签，
+  0.2.0 在 `feat/upstream-engine` 分支开发。迁移详情见 `docs/MIGRATION_UPSTREAM_0.2.0.md`，
+  交付说明见 `docs/DELIVERY_0.2.0.md`。
 - 仓库不跟踪 `.venv`、`_probe_gui`、`_test_artifacts`、`acceptance`、`data`、`dist`、`release`
   与 `tools/ffmpeg/bin/*.exe`（FFmpeg 版本与校验和记录在发布报告中）。
 
 ## 1. 当前基线
 
 - Python 3.12.16（项目独立虚拟环境 `.venv`）。
-- PySide6 Widgets + SQLite（Schema V2，未变更）+ urllib + FFmpeg 子进程。
+- PySide6 Widgets + SQLite（Schema V2，未变更）+ httpx(HTTP/2) + FFmpeg 子进程。
 - 入口：`.venv\Scripts\python.exe -m dlrecorder`。
 - 测试：`.venv\Scripts\python.exe -m pytest -q`。
-- 最近完整回归：**205 passed**（2026-11-17，交付前完整性审查）。
+- 最近完整回归：**232 passed**（2026-11-18，引擎迁移后）。
 - 单实例、数据库历史数据保护、渐进式改造原则保持不变。
-- 生产默认装配 `RealDouyinParser`（匿名 Cookie 会话，不使用用户凭据），读取公开直播页 React Flight 数据；`DLR_PARSER=mock` 仅供开发/自动化验证，pytest 默认使用该模式。
+- 生产默认装配 `EngineDouyinParser`（上游 `webcast/room/web/enter` + `a_bogus`），并以
+  `RealDouyinParser`（公开页 React Flight）作为第二数据源回退；`DLR_PARSER=mock` 仅供开发/自动化验证。
 
 ## 2. 已完成功能
 
@@ -32,7 +33,7 @@
 | 监控任务 | 已完成 | 多房间并发、任务隔离、Session 生命周期、停止与异常取消处理；排队已满仅提示一次并自动重试 |
 | 单实例 | 已完成 | Windows 命名互斥量；进程终止时由系统回收 |
 | HTTP 层 | 已完成 | 专用执行器、关闭串行化、传输错误分类；真实 HTTPS 请求已实测可达 |
-| 解析器 | 已完成（状态映射已真实验证） | 公开页 React Flight 连续记录解析、目标房间校验、状态与流地址提取；实测 `status=2 -> LIVE`、`status=4 -> OFFLINE_CONFIRMED`；无效 ID 返回 `API_MALFORMED` |
+| 解析器 | 已完成（0.2.0 切换上游引擎） | 主链路 `web enter + a_bogus`（约 4 KB JSON，0.39–0.78 s/房间），回退公开页 React Flight；风控单独归类 `RISK_CONTROL`；实测离线房间 `status=4 -> OFFLINE_CONFIRMED`、无效 ID 不误判直播 |
 | FFmpeg 管理 | 已完成 | 启停、q/terminate/kill、退出码、输出增长检测、卡死超时 |
 | 真实 FFmpeg 录制 | 已完成（本地与指定真实直播流） | 内置 FFmpeg 9.0.2；本地媒体、本地限速流及真实抖音流均写出非空文件并正常收尾 |
 | 录制服务 | 已完成 | 状态机、历史持久化、异常恢复（interrupted）、多房间独立 |
