@@ -178,7 +178,8 @@ class MainWindow(QMainWindow):
         text, ok = QInputDialog.getText(
             self,
             "添加直播间",
-            "直播间链接或 ID（例如 https://live.douyin.com/123456）:",
+            "直播间链接或 ID（例如 https://live.douyin.com/123456 "
+            "或 https://www.douyin.com/follow/live/123456）:",
         )
         if not ok or not text.strip():
             return

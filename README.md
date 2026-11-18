@@ -2,16 +2,20 @@
 
 基于 Python 3.12 + PySide6 Widgets + SQLite 的轻量级 Windows 桌面应用。
 
-当前版本：**0.3.0**。正式发布包：
-`release\DouyinLiveRecorder-0.3.0-win64.zip`，解压后直接运行 `DouyinLiveRecorder.exe`
-（onedir 便携版，内置 FFmpeg）。0.3.0 交付与测试说明见 [DELIVERY_0.3.0.md](docs/DELIVERY_0.3.0.md)，
-0.2.0 见 [DELIVERY_0.2.0.md](docs/DELIVERY_0.2.0.md)，更早版本见 `docs/RELEASE_REPORT_0.1.*.md`。
+当前版本：**0.3.1**。正式发布包：
+`release\DouyinLiveRecorder-0.3.1-win64.zip`，解压后直接运行 `DouyinLiveRecorder.exe`
+（onedir 便携版，内置 FFmpeg）。0.3.1 为链接解析修复版本（见
+[docs/FIX_0.3.1_URL_PARSING.md](docs/FIX_0.3.1_URL_PARSING.md)），0.3.0 交付与测试说明见
+[DELIVERY_0.3.0.md](docs/DELIVERY_0.3.0.md)，0.2.0 见 [DELIVERY_0.2.0.md](docs/DELIVERY_0.2.0.md)，
+更早版本见 `docs/RELEASE_REPORT_0.1.*.md`。
 
 ## 当前实现状态
 
 已实现并通过自动化测试（离线）：
 
-- 直播间配置：添加、编辑、删除、持久化与参数校验；删除房间保留录制历史与文件。
+- 直播间配置：添加、编辑、删除、持久化与参数校验；支持直接粘贴 `live.douyin.com/<数字>`、
+  `www.douyin.com/follow/live/<数字>`、`www.douyin.com/root/live/<数字>` 等链接（可带查询参数与分享文案）；
+  删除房间保留录制历史与文件。
 - 监控任务：多房间并发监控、任务隔离、停止与异常退出处理、Session 历史记录；瞬时排队已满只提示一次并自动重试，不再刷屏报错。
 - 单实例运行：Windows 命名互斥量，进程终止前不提前释放。
 - HTTP 层：传输错误分类（超时 / DNS / TLS / 连接 / 协议 / 非法 URL）与可注入客户端。
@@ -100,7 +104,7 @@
 .venv\Scripts\python.exe -m pytest -q
 ```
 
-当前回归：**259 passed**。测试默认 `DLR_PARSER=mock`，不发起真实抖音请求；
+当前回归：**273 passed**。测试默认 `DLR_PARSER=mock`，不发起真实抖音请求；
 其中真实 FFmpeg 测试使用项目内置 FFmpeg 与本地生成媒体/本地限速 HTTP 流。
 
 0.3.0 新增回归：进程登记表与归属核验（14 项）、Job Object 关闭即终止子进程、
@@ -184,6 +188,16 @@ PyInstaller 6.22.3 已安装到项目虚拟环境，构建命令：
 判定通过。窗口标题与启动日志都会显示版本号，便于核对运行的是哪一版。
 
 ## 版本变更记录
+
+### 0.3.1（2026-11-18，直播间链接解析修复）
+
+- 修复：`https://www.douyin.com/follow/live/<数字>` 形式的直播间链接无法识别的问题。
+  现在按链接结构提取房间号：`live.douyin.com/<数字>` 取路径首段，
+  `www.douyin.com` 下取 `live` 段之后的整段数字（`/live/`、`/root/live/`、`/follow/live/` 等），
+  查询参数中只认 `live_web_rid`；`anchor_id`、`user_id` 等参数不会被误当作房间号。
+- 改进：不支持的域名、路径中没有房间号时给出区分明确的提示。
+- 验证：新增 14 项链接解析回归，全量 273 passed；用户上报链接经生产解析器实测返回直播中（status=2）并可取到流地址；
+  0.3.1 打包版实测可添加该链接并显示 `LIVE / SUCCESS`。
 
 ### 0.3.0（2026-11-18，进程生命周期 / 清晰度与登录 / 稳定性）
 

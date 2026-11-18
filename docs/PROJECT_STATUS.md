@@ -6,11 +6,12 @@
 
 ## 0. 版本
 
-- 当前版本：**0.3.0**（`src/dlrecorder/__init__.py`、`pyproject.toml`），批次 F/G/H 交付版本。
+- 当前版本：**0.3.1**（`src/dlrecorder/__init__.py`、`pyproject.toml`），0.3.0（批次 F/G/H）之上的链接解析修复版本。
 - 版本号会写入窗口标题与启动日志 `应用初始化，版本=...`，用于核对打包程序与源码一致。
-- 源码基线：Git 仓库（`master`），已有标签 **`v0.1.0` / `v0.1.1` / `v0.2.0`**（均保持不变）；
+- 源码基线：Git 仓库（`master`），已有标签 **`v0.1.0` / `v0.1.1` / `v0.2.0` / `v0.3.0`**（均保持不变）；
   0.3.0 在 `v0.2.0` 基础上继续开发，交付说明见 `docs/DELIVERY_0.3.0.md`，
-  测试记录见 `docs/TEST_REPORT_0.3.0.md`，0.2.0 迁移见 `docs/MIGRATION_UPSTREAM_0.2.0.md`。
+  测试记录见 `docs/TEST_REPORT_0.3.0.md`，0.2.0 迁移见 `docs/MIGRATION_UPSTREAM_0.2.0.md`；
+  0.3.1 修复 `www.douyin.com/follow/live/<数字>` 链接无法识别的问题，见 `docs/FIX_0.3.1_URL_PARSING.md`。
 - 仓库不跟踪 `.venv`、`_probe_gui`、`_test_artifacts`、`acceptance`、`data`、`dist`、`release`
   与 `tools/ffmpeg/bin/*.exe`（FFmpeg 版本与校验和记录在发布报告中）。
 
@@ -20,7 +21,7 @@
 - PySide6 Widgets + SQLite（Schema V2，未变更）+ httpx(HTTP/2) + FFmpeg 子进程。
 - 入口：`.venv\Scripts\python.exe -m dlrecorder`。
 - 测试：`.venv\Scripts\python.exe -m pytest -q`。
-- 最近完整回归：**259 passed**（2026-11-18，F/G/H 完成后）。
+- 最近完整回归：**273 passed**（2026-11-18，0.3.1 链接解析修复后）。
 - 单实例、数据库历史数据保护、渐进式改造原则保持不变。
 - 生产默认装配 `EngineDouyinParser`（上游 `webcast/room/web/enter` + `a_bogus`），并以
   `RealDouyinParser`（公开页 React Flight）作为第二数据源回退；`DLR_PARSER=mock` 仅供开发/自动化验证。
@@ -253,6 +254,14 @@
   **低配机器（i3 / 4GB）真机验收仍未执行，不得视为通过**。
 
 ## 10. 版本变更记录
+
+### 0.3.1（2026-11-18，直播间链接解析修复）
+
+- 修复 `https://www.douyin.com/follow/live/<数字>` 链接被拒绝的问题；改为按 URL 结构提取房间号，
+  支持 `live.douyin.com/<数字>`、`/live/`、`/root/live/`、`/follow/live/`，查询参数只认 `live_web_rid`。
+- `anchor_id`、`user_id` 等参数不会被误当作房间号；域名白名单与错误提示区分更明确。
+- 验证：新增 14 项链接解析回归，全量 273 passed；用户上报链接经生产解析器实测 status=2（直播中）并有流地址；
+  0.3.1 打包版实测添加该链接后显示 `LIVE / SUCCESS`，关闭退出码 0、无残留 FFmpeg。
 
 ### 0.3.0（2026-11-18，批次 F/G/H）
 
