@@ -107,18 +107,30 @@ def build_record_command(
     output_path: Path,
     *,
     reconnect: bool = True,
-    reconnect_delay_max_s: int = 10,
+    reconnect_delay_max_s: int = 60,
     rw_timeout_us: int = 15_000_000,
     max_muxing_queue_size: int = 1024,
+    analyzeduration_us: int = 20_000_000,
+    probesize: int = 10_000_000,
+    user_agent: str = (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/124.0.0.0 Safari/537.36"
+    ),
 ) -> list[str]:
     """构建默认录制命令：直接封装原始流到 MPEG-TS，不转码。
 
-    输入侧参数（``-rw_timeout`` / ``-reconnect*``）必须位于 ``-i`` 之前，
-    否则会被当作输出参数而失效。``-reconnect`` 仅对 HTTP(S) 输入有效，本地
-    文件会因"Option not found"直接失败，因此只在网络流上启用。这里只开启
-    连接失败重连，不使用 ``-reconnect_at_eof`` / ``-reconnect_streamed``：
-    直播结束（EOF）时它们会反复重连已结束的流，使进程无法正常退出；进程级
-    异常退出由录制服务负责重新解析并续录。
+    参数组合与上游 ihmily/DouyinLiveRecorder v4.0.7 的抖音分支对齐（除下述
+    刻意差异）：更长的 ``-rw_timeout``、显式的 ``-analyzeduration/-probesize``、
+    ``-fflags +discardcorrupt``、``-thread_queue_size`` 与 TS 时间戳修正参数，
+    用于降低弱网下的首包延迟与因损坏包导致的退出。
+
+    与上游的刻意差异：不使用 ``-reconnect_streamed`` / ``-reconnect_at_eof``。
+    本项目已在实测中确认它们会让直播结束（EOF）后的进程反复重连而不退出，
+    而进程级异常退出后的重新解析与续录由 ``RecordingService`` 负责。
+
+    输入侧参数必须位于 ``-i`` 之前，否则会被当作输出参数而失效。``-reconnect``
+    与 HTTP 相关参数仅对 HTTP(S) 输入有效，本地文件会因 "Option not found"
+    直接失败，因此只在网络流上启用。
     """
     is_http_input = stream_url.lower().startswith(("http://", "https://"))
     command = [
@@ -128,11 +140,28 @@ def build_record_command(
         "warning",
         "-y",
     ]
-    if reconnect and is_http_input:
+    if is_http_input:
         command.extend(
             [
                 "-rw_timeout",
                 str(max(0, int(rw_timeout_us))),
+                "-user_agent",
+                user_agent,
+                "-protocol_whitelist",
+                "rtmp,crypto,file,http,https,tcp,tls,udp,rtp,httpproxy",
+                "-thread_queue_size",
+                "1024",
+                "-analyzeduration",
+                str(max(0, int(analyzeduration_us))),
+                "-probesize",
+                str(max(0, int(probesize))),
+                "-fflags",
+                "+discardcorrupt",
+            ]
+        )
+    if reconnect and is_http_input:
+        command.extend(
+            [
                 "-reconnect",
                 "1",
                 "-reconnect_delay_max",
@@ -145,8 +174,14 @@ def build_record_command(
             stream_url,
             "-c",
             "copy",
+            "-sn",
+            "-dn",
             "-max_muxing_queue_size",
             str(max(1, int(max_muxing_queue_size))),
+            "-correct_ts_overflow",
+            "1",
+            "-avoid_negative_ts",
+            "1",
             "-f",
             "mpegts",
             str(output_path),

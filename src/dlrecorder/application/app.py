@@ -16,6 +16,7 @@ from PySide6.QtWidgets import QApplication
 
 from .. import __version__
 from ..domain.states import ParseResult
+from ..douyin.engine.parser import EngineDouyinParser
 from ..douyin.parser import DouyinParser, MockParser, RealDouyinParser
 from ..infrastructure.backup import apply_pending_restore
 from ..infrastructure.config import AppConfig
@@ -60,9 +61,11 @@ def _build_parser() -> DouyinParser:
         parser.set_default(ParseResult.SUCCESS, 2, stream_url or None)
         return parser
     # 匿名 Cookie 会话（ttwid 等），不读取或保存用户凭据。
+    # 主链路：上游引擎（web enter + a_bogus）；回退：公开直播页内嵌数据。
     jar = http.cookiejar.CookieJar()
     opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar))
-    return RealDouyinParser(UrllibHttpClient(opener), timeout_s=15.0)
+    legacy = RealDouyinParser(UrllibHttpClient(opener), timeout_s=15.0)
+    return EngineDouyinParser(timeout_s=10.0, fallback=legacy)
 
 
 class Application:

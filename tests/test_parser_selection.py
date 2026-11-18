@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dlrecorder.application.app import Application
+from dlrecorder.douyin.engine.parser import EngineDouyinParser
 from dlrecorder.douyin.parser import MockParser, RealDouyinParser
 
 
@@ -9,7 +10,9 @@ def test_production_defaults_to_real_parser(tmp_path, qt_app, monkeypatch):
     monkeypatch.delenv("DLR_PARSER", raising=False)
     application = Application(base_dir=tmp_path)
     try:
-        assert isinstance(application.parser, RealDouyinParser)
+        # 主链路为上游引擎解析，旧页面解析器作为第二数据源保留。
+        assert isinstance(application.parser, EngineDouyinParser)
+        assert isinstance(application.parser._fallback, RealDouyinParser)
     finally:
         application.shutdown()
         application.db.close()

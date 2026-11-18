@@ -1,6 +1,6 @@
 DouyinLiveRecorder-Desktop 第三方组件与许可说明
 
-本程序（DouyinLiveRecorder-Desktop 0.1.1）以 Windows onedir 形式分发，随包包含或运行时
+本程序（DouyinLiveRecorder-Desktop 0.2.0）以 Windows onedir 形式分发，随包包含或运行时
 使用以下第三方组件。各组件的版权与许可归其各自权利人所有。
 
 1. Python 运行时
@@ -33,6 +33,35 @@ DouyinLiveRecorder-Desktop 第三方组件与许可说明
 5. 其他 Python 标准库
    - 许可：Python Software Foundation License
    - 说明：urllib、asyncio、logging、subprocess 等均随 Python 分发。
+
+6. 抖音解析引擎代码（源码移植）
+   - 组件：ihmily/DouyinLiveRecorder v4.0.7 的抖音解析实现
+     （a_bogus 签名、webcast room web enter 接口、流地址选择、FFmpeg 参数组合）
+   - 许可：MIT License，Copyright (c) 2025 Hmily
+   - 来源：https://github.com/ihmily/DouyinLiveRecorder
+   - 说明：本项目移植其抖音链路（src/dlrecorder/douyin/engine/），去掉多平台代码，
+     并适配本项目的解析器接口与日志/错误分类；未修改签名算法本身。
+   - MIT 许可全文：
+     Permission is hereby granted, free of charge, to any person obtaining a copy
+     of this software and associated documentation files (the "Software"), to deal
+     in the Software without restriction, including without limitation the rights
+     to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+     copies of the Software, and to permit persons to whom the Software is
+     furnished to do so, subject to the following conditions:
+     The above copyright notice and this permission notice shall be included in
+     all copies or substantial portions of the Software.
+     THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+     IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+     FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+     AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+     LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+     OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+     THE SOFTWARE.
+
+7. HTTP 客户端（httpx / h2 / httpcore）
+   - 组件：httpx（BSD-3-Clause）、httpcore（BSD-3-Clause）、h2（MIT）
+   - 用途：抖音接口请求（HTTP/2、超时与连接管理）
+   - 来源：https://github.com/encode/httpx  /  https://github.com/python-hyper/h2
 
 本文件仅作组件清单与许可指引，不构成法律意见。正式对外分发前，建议由项目所有者结合
 实际分发方式完成许可合规复核。

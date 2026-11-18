@@ -160,6 +160,8 @@ def test_build_record_command_can_disable_reconnect(tmp_path):
         "ffmpeg", "https://example.invalid/live.flv", tmp_path / "a.ts", reconnect=False
     )
 
+    # 关闭的是重连；读取超时与缓冲参数与重连无关，仍然保留。
     assert "-reconnect" not in command
-    assert "-rw_timeout" not in command
-    assert command.index("-i") == 5
+    assert "-reconnect_delay_max" not in command
+    assert "-rw_timeout" in command
+    assert command.index("-rw_timeout") < command.index("-i")

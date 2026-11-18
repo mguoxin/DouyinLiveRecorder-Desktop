@@ -15,7 +15,9 @@
 - 监控任务：多房间并发监控、任务隔离、停止与异常退出处理、Session 历史记录；瞬时排队已满只提示一次并自动重试，不再刷屏报错。
 - 单实例运行：Windows 命名互斥量，进程终止前不提前释放。
 - HTTP 层：传输错误分类（超时 / DNS / TLS / 连接 / 协议 / 非法 URL）与可注入客户端。
-- 解析层：生产默认 `RealDouyinParser`（匿名 Cookie 会话），读取公开直播页 React Flight 数据；已实测 `status=2 -> LIVE`、`status=4 -> OFFLINE_CONFIRMED` 与真实 FLV/HLS 流地址提取；`DLR_PARSER=mock` 仅用于开发/测试。
+- 解析层：生产默认 `EngineDouyinParser`（0.2.0 起），主链路移植上游 ihmily/DouyinLiveRecorder 的
+  `webcast/room/web/enter` + `a_bogus` 签名，返回小体积 JSON（实测 0.4–0.8s/房间），并保留旧页面
+  React Flight 解析器作为第二数据源回退；风控页单独归类为 `RISK_CONTROL`；`DLR_PARSER=mock` 仅用于开发/测试。
 - 录制闭环：FFmpeg 子进程启停、输出增长检测、异常退出处理、录制历史持久化、异常退出恢复。
 - 自动录制：确认开播后自动开始，停止监控 / 删除房间后自动停止；开关持久化。
 - GUI：房间列表、编辑对话框、录制控制、自动录制开关、录制历史、打开录制目录。
@@ -33,7 +35,7 @@
 
 尚未完成或未验证：
 
-- 公开页面结构后续变化可能需要同步维护 React Flight 解析适配。
+- 解析主链路依赖抖音接口；接口或签名规则变化时需要同步上游引擎版本（回退链路仍可独立工作）。
 - 长时间运行：24 小时采样已完成（20 房间全程稳定、内存 34–60MB 无增长、线程数稳定）；
   期间发现并修复“录制目录被外部删除时磁盘检查每秒刷日志”的缺陷。
 - 低配机器（i3 / 4GB）验收：待执行，使用 `tools\acceptance_low_spec.ps1` 生成 JSON 报告。
