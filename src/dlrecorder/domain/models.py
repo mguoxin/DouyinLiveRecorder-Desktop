@@ -14,10 +14,12 @@ _MAX_DISPLAY_NAME_LEN = 64
 # 支持的抖音域名：直播间页（live.douyin.com）与站内页面（www.douyin.com / douyin.com）。
 _LIVE_HOSTS = frozenset({"live.douyin.com", "www.douyin.com", "douyin.com"})
 # 路径中的房间号只按“整段数字”识别，避免从 anchor_id 等参数或其他位置误取数字。
-_RID_SEGMENT_RE = re.compile(r"^\d{1,20}$")
-# 从文本中定位抖音链接（可带分享文案，scheme 可省略）。
+# 路径中的房间号只按“整段 ASCII 数字”识别，避免从 anchor_id 等参数或其他位置误取数字；
+# 这里不用 \d，因为 \d 会匹配全角/其他语言的 Unicode 十进制数字。
+_RID_SEGMENT_RE = re.compile(r"^[0-9]{1,20}$")
+# 从文本中定位抖音链接（可带分享文案，scheme 可省略，允许显式端口）。
 _DOUYIN_URL_RE = re.compile(
-    r"(?<![A-Za-z0-9.-])(?:https?://)?(?:(?:live|www)\.)?douyin\.com/"
+    r"(?<![A-Za-z0-9.-])(?:https?://)?(?:(?:live|www)\.)?douyin\.com(?::[0-9]{1,5})?/"
     r"[^\s'\"<>，。；、）()]*",
     re.IGNORECASE,
 )
@@ -30,7 +32,7 @@ _LIVE_RID_PARAM_RE = re.compile(
 _SHORT_LINK_RE = re.compile(
     r"(?:https?://)?(?:v\.douyin\.com|v\.iesdouyin\.com)/\S+", re.IGNORECASE
 )
-_HOST_RE = re.compile(r"https?://([^/\s?#]+)", re.IGNORECASE)
+_HOST_RE = re.compile(r"https?://([^/\s?#:]+)", re.IGNORECASE)
 
 _RID_HINT = (
     "请使用 live.douyin.com/<数字> 或 www.douyin.com/follow/live/<数字> 形式的地址"

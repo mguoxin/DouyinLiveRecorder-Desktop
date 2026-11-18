@@ -21,7 +21,7 @@
 - PySide6 Widgets + SQLite（Schema V2，未变更）+ httpx(HTTP/2) + FFmpeg 子进程。
 - 入口：`.venv\Scripts\python.exe -m dlrecorder`。
 - 测试：`.venv\Scripts\python.exe -m pytest -q`。
-- 最近完整回归：**273 passed**（2026-11-18，0.3.1 链接解析修复后）。
+- 最近完整回归：**276 passed**（2026-11-18，0.3.1 链接解析修复后）。
 - 单实例、数据库历史数据保护、渐进式改造原则保持不变。
 - 生产默认装配 `EngineDouyinParser`（上游 `webcast/room/web/enter` + `a_bogus`），并以
   `RealDouyinParser`（公开页 React Flight）作为第二数据源回退；`DLR_PARSER=mock` 仅供开发/自动化验证。
@@ -260,8 +260,10 @@
 - 修复 `https://www.douyin.com/follow/live/<数字>` 链接被拒绝的问题；改为按 URL 结构提取房间号，
   支持 `live.douyin.com/<数字>`、`/live/`、`/root/live/`、`/follow/live/`，查询参数只认 `live_web_rid`。
 - `anchor_id`、`user_id` 等参数不会被误当作房间号；域名白名单与错误提示区分更明确。
-- 验证：新增 14 项链接解析回归，全量 273 passed；用户上报链接经生产解析器实测 status=2（直播中）并有流地址；
+- 验证：新增 17 项链接解析回归，全量 276 passed；用户上报链接经生产解析器实测 status=2（直播中）并有流地址；
   0.3.1 打包版实测添加该链接后显示 `LIVE / SUCCESS`，关闭退出码 0、无残留 FFmpeg。
+- 0.3.1 独立验收补充修复：路径房间号改用 ASCII `[0-9]`（原 `\d` 会接受全角/其他语言数字）；
+  链接定位允许显式端口（`live.douyin.com:443`），错误提示不再把端口并入域名。
 
 ### 0.3.0（2026-11-18，批次 F/G/H）
 

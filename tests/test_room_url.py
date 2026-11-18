@@ -77,6 +77,27 @@ def test_domain_lookalike_is_not_accepted():
         validate_web_rid("https://fakedouyin.com/follow/live/805329551023")
 
 
+def test_url_with_explicit_port_is_supported():
+    assert validate_web_rid("https://live.douyin.com:443/805329551023") == "805329551023"
+    assert (
+        validate_web_rid("HTTPS://WWW.DOUYIN.COM:443/follow/live/805329551023")
+        == "805329551023"
+    )
+
+
+def test_unicode_digits_are_not_accepted_as_room_id():
+    """全角/阿拉伯数字属于 Unicode 数字，但不应被当作直播间号。"""
+    with pytest.raises(ValueError, match="链接路径中没有有效的直播间号"):
+        validate_web_rid("https://www.douyin.com/follow/live/８０５３２９")
+    with pytest.raises(ValueError, match="链接路径中没有有效的直播间号"):
+        validate_web_rid("https://www.douyin.com/live/١٢٣")
+
+
+def test_unsupported_host_with_port_reports_host_only():
+    with pytest.raises(ValueError, match="不支持的域名 example.com"):
+        validate_web_rid("https://example.com:8080/live/805329551023")
+
+
 def test_short_link_hint_is_preserved():
     with pytest.raises(ValueError, match="v.douyin.com"):
         validate_web_rid("https://v.douyin.com/iRNBho6u/")
