@@ -98,7 +98,7 @@ STREAM_URL = http://pull-flv-l13.douyincdn.com/third/stream-408691124008649491_u
 - 全量回归：**273 passed**（0.3.0 的 259 项 + 本次新增 14 项）。
 - 版本：`0.3.1`（补丁版本）。原因：0.3.0 发布包对用户上报链接存在可见的功能缺失，
   必须重新构建发布包才能真正修复；不改动 `v0.3.0` 标签与既有发布物。
-- 发布物：`release\DouyinLiveRecorder-0.3.1-win64.zip`（81,499,953 字节），
+- 发布物：`release\DouyinLiveRecorder-0.3.1-win64.zip`（81,499,978 字节），
   对应条目已追加到 `release\SHA256SUMS.txt`：
-  `40A393D3C2655E5FC703C38EC5AE2409364D796D99906E8351D9D2E01D3FC42A`。
+  `FBE2CC654B24CC40310A6C8813692DFA2D1490AAD6B4A5BB2A2F57A194A96E3E`。
 - 发布目录 174 个文件、201.97 MB，不含 `data\`、Cookie、数据库与录制文件。
