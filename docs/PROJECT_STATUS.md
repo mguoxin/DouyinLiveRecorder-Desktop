@@ -6,11 +6,11 @@
 
 ## 0. 版本
 
-- 当前版本：**0.2.0**（`src/dlrecorder/__init__.py`、`pyproject.toml`），技术基线切换版本。
+- 当前版本：**0.3.0**（`src/dlrecorder/__init__.py`、`pyproject.toml`），批次 F/G/H 交付版本。
 - 版本号会写入窗口标题与启动日志 `应用初始化，版本=...`，用于核对打包程序与源码一致。
-- 源码基线：已初始化 Git 仓库，正式发布标签 **`v0.1.1`**（`v0.1.0` 保持不变）；0.1.2 已冻结但未打标签，
-  0.2.0 在 `feat/upstream-engine` 分支开发。迁移详情见 `docs/MIGRATION_UPSTREAM_0.2.0.md`，
-  交付说明见 `docs/DELIVERY_0.2.0.md`。
+- 源码基线：Git 仓库（`master`），已有标签 **`v0.1.0` / `v0.1.1` / `v0.2.0`**（均保持不变）；
+  0.3.0 在 `v0.2.0` 基础上继续开发，交付说明见 `docs/DELIVERY_0.3.0.md`，
+  测试记录见 `docs/TEST_REPORT_0.3.0.md`，0.2.0 迁移见 `docs/MIGRATION_UPSTREAM_0.2.0.md`。
 - 仓库不跟踪 `.venv`、`_probe_gui`、`_test_artifacts`、`acceptance`、`data`、`dist`、`release`
   与 `tools/ffmpeg/bin/*.exe`（FFmpeg 版本与校验和记录在发布报告中）。
 
@@ -20,7 +20,7 @@
 - PySide6 Widgets + SQLite（Schema V2，未变更）+ httpx(HTTP/2) + FFmpeg 子进程。
 - 入口：`.venv\Scripts\python.exe -m dlrecorder`。
 - 测试：`.venv\Scripts\python.exe -m pytest -q`。
-- 最近完整回归：**232 passed**（2026-11-18，引擎迁移后）。
+- 最近完整回归：**259 passed**（2026-11-18，F/G/H 完成后）。
 - 单实例、数据库历史数据保护、渐进式改造原则保持不变。
 - 生产默认装配 `EngineDouyinParser`（上游 `webcast/room/web/enter` + `a_bogus`），并以
   `RealDouyinParser`（公开页 React Flight）作为第二数据源回退；`DLR_PARSER=mock` 仅供开发/自动化验证。
@@ -34,7 +34,11 @@
 | 单实例 | 已完成 | Windows 命名互斥量；进程终止时由系统回收 |
 | HTTP 层 | 已完成 | 专用执行器、关闭串行化、传输错误分类；真实 HTTPS 请求已实测可达 |
 | 解析器 | 已完成（0.2.0 切换上游引擎） | 主链路 `web enter + a_bogus`（约 4 KB JSON，0.39–0.78 s/房间），回退公开页 React Flight；风控单独归类 `RISK_CONTROL`；实测离线房间 `status=4 -> OFFLINE_CONFIRMED`、无效 ID 不误判直播 |
-| FFmpeg 管理 | 已完成 | 启停、q/terminate/kill、退出码、输出增长检测、卡死超时 |
+| FFmpeg 管理 | 已完成（0.3.0 生命周期） | 启停、q/terminate/kill、退出码、输出增长检测、卡死超时；Job Object 保证应用被强杀时子进程随之终止 |
+| 进程登记与孤儿清理 | 已完成（0.3.0） | `data/runtime/ffmpeg_processes.json` 记录 (PID, 创建时间, 路径)；启动时仅在三项身份完全匹配时终止遗留 FFmpeg，其余跳过并保留记录 |
+| 网络中断恢复 | 已完成（0.3.0） | 退出码 0 但无法确认直播状态、输出长时间不增长时重新解析续录；重试 5 次、退避 2/5/10/20/30 s，有界不无限重连 |
+| 录制清晰度 | 已完成（0.3.0） | OD/UHD/HD/SD/LD，默认 UHD；设置持久化，下一次解析生效，上游自动回退 |
+| Cookie 登录 | 已完成（0.3.0） | Windows DPAPI 加密保存于 `data/runtime/douyin_cookie.bin`；不入库、不回显、不进日志；失效时归类风控并提示 |
 | 真实 FFmpeg 录制 | 已完成（0.2.0 真实验证 2026-11-18） | 内置 FFmpeg 9.0.2；真实抖音房间 `476806339740` 源码版录制 61 s：19,214,916 B；打包版录制 205 s：63,374,236 B；两次 DB 大小与磁盘一致、全解码退出码 0、无残留进程 |
 | 录制服务 | 已完成 | 状态机、历史持久化、异常恢复（interrupted）、多房间独立 |
 | 自动录制 | 已完成 | 确认 LIVE 后启动；确认下播 / 停止监控 / 删除房间时停止；开关持久化 |
@@ -157,6 +161,18 @@
   - DB：`recordings.id=2 / status=completed / file_size=63374236 / session_id=5`，与磁盘一致；
   - 全解码 `ffmpeg -v error -i ... -f null -` 退出码 0（47 条 DTS 告警均位于 0.02–0.03 s 起始处），FFmpeg 残留 0；
   - 证据详见 `docs/DELIVERY_0.2.0.md` §4。
+- 0.3.0 批次 F/G/H 验证（2026-11-18，隔离目录 `%TEMP%\dlr-f|g|h`，详见 `docs/TEST_REPORT_0.3.0.md`）：
+  - F：录制中 `os._exit(1)` 崩溃后 FFmpeg 随 Job 立即消失，已写文件保留可解码；重启清理陈旧登记并回填
+    `interrupted`；伪造“登记匹配”的遗留 ffmpeg 被安全终止；创建时间/路径不一致时跳过、不误杀。
+  - G：真实房间 `476806339740` 五档清晰度（OD/UHD/HD/SD/LD）均 `status=2` 且有流，`selected` 与请求一致；
+    HD 真实录制 22 s / 6,666,104 B，H.264 720x1270 22fps + AAC，全解码 0 错误；Cookie 经 DPAPI 加密
+    （38 字符），重启读取一致、文件不含明文、清除后回到匿名；伪造 Cookie 触发 `RISK_CONTROL` 且不误开录制。
+  - H：4 房间并发 30 分钟（内存 59.6MB 平稳、FFmpeg 合计约 70MB、输出约 1.0GB 持续增长）；
+    强杀其中一个 FFmpeg 后该房间自动续录（新分段 5.5MB），其余房间继续增长，结束一致性校验通过；
+    网络 8 秒中断不断流（1.0→8.5MB）；90 秒中断触发退出码 0 → 重新解析 → 续录（修复前会直接结束）；
+    不可达流地址 6 次尝试、105 秒、最终 `failed`，无残留进程。
+  - H 低配模拟：2 个逻辑核亲和性下 20 房间基准 初始化 0.075 s、启动 2.03 s、峰值 63.4MB、关闭 0.013 s、
+    20/20 LIVE；**不是 i3/4GB 真机验收**。
 - 本机性能基准（Mock、1s 监控间隔、10s 运行，18 逻辑处理器 / 31.47GB）：
   - 初始化 0.068s；逐个启动 20 房间 2.019s；
   - 空闲工作集 58.04MB，峰值 59.04MB；
@@ -237,6 +253,15 @@
   **低配机器（i3 / 4GB）真机验收仍未执行，不得视为通过**。
 
 ## 10. 版本变更记录
+
+### 0.3.0（2026-11-18，批次 F/G/H）
+
+- 新增 FFmpeg 进程生命周期：Job Object 强杀兜底、进程登记表、身份核验后的遗留进程清理（不误杀）。
+- 新增录制清晰度设置（OD/UHD/HD/SD/LD，默认 UHD）与抖音 Cookie 登录配置（DPAPI 加密，不入库不入日志）。
+- 修复网络中断后 FFmpeg 以退出码 0 提前结束时被误判为直播结束；输出长时间停滞时改为续录；重试有界。
+- 验证：259 passed；真实环境完成崩溃/重启/遗留进程、五档清晰度、Cookie 加密与失效、4 房间 30 分钟、
+  单任务强杀隔离、8 秒与长时网络中断、不可达地址有界重试、2 核亲和性基准。
+- 未完成：i3/4GB 真机验收。
 
 ### 0.1.1（2026-11-18，缺陷修复版本）
 
