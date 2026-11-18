@@ -46,6 +46,8 @@ logger = logging.getLogger(__name__)
 
 class MainWindow(QMainWindow):
     auto_record_toggled = Signal(bool)
+    # 用户主动点击“停止录制”（区别于自动停止），用于抑制自动录制重新拉起
+    recording_stop_requested = Signal(int)
 
     def __init__(
         self,
@@ -164,6 +166,7 @@ class MainWindow(QMainWindow):
         rec.recording_started.connect(self._on_recording_started)
         rec.recording_finished.connect(self._on_recording_finished)
         rec.recording_error.connect(self._on_recording_error)
+        rec.recording_reconnecting.connect(self._on_recording_reconnecting)
 
     def _load_initial_rooms(self) -> None:
         for room in self._service.get_rooms():
@@ -253,6 +256,7 @@ class MainWindow(QMainWindow):
         if not self._recording.is_recording(room_id):
             QMessageBox.information(self, "提示", "该房间当前未在录制。")
             return
+        self.recording_stop_requested.emit(room_id)
         self._recording.stop_recording(room_id)
 
     def _on_start_monitor(self) -> None:
@@ -319,6 +323,20 @@ class MainWindow(QMainWindow):
 
     def _on_recording_error(self, room_id: int, message: str) -> None:
         self.status_label.setText(f"房间 {room_id} 录制错误: {message}")
+
+    def _on_recording_reconnecting(self, room_id: int, snapshot: dict) -> None:
+        self.room_list.set_recording(room_id, True)
+        self.status_label.setText(
+            f"房间 {room_id} 录制中断，"
+            f"{snapshot.get('delay_s', 0):.0f} 秒后自动续录"
+            f"（第 {snapshot.get('attempt', 1)}/{snapshot.get('max_attempts', 1)} 次）"
+        )
+        logger.warning(
+            "房间 %s 录制中断，准备第 %s 次自动续录: %s",
+            room_id,
+            snapshot.get("attempt"),
+            snapshot.get("error"),
+        )
 
     def _on_auto_record_toggled(self, enabled: bool) -> None:
         self._auto_record = enabled

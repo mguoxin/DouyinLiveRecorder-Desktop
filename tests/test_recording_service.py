@@ -7,21 +7,33 @@ from pathlib import Path
 
 import pytest
 
-from dlrecorder.application.recording_service import RecordingService
+from dlrecorder.application.recording_service import RecordingService, StreamRefresh
 from dlrecorder.infrastructure.db import Database
 
 STUB = r"""
-import sys, time
+import os, sys, time
 path, mode = sys.argv[1], sys.argv[2]
+counter = sys.argv[3] if len(sys.argv) > 3 else ""
 with open(path, "wb") as f:
     if mode != "empty":
         f.write(b"x" * 8192)
         f.flush()
+if counter:
+    runs = 0
+    if os.path.exists(counter):
+        with open(counter, encoding="utf-8") as c:
+            runs = len(c.read())
+    with open(counter, "a", encoding="utf-8") as c:
+        c.write("x")
+    if ":" in mode and runs < int(mode.split(":", 1)[1]):
+        sys.exit(3)
 if mode == "exit3":
     sys.exit(3)
-if mode in ("sleep", "stall"):
+if mode.startswith("clean:") and runs < int(mode.split(":", 1)[1]):
+    sys.exit(0)
+if mode in ("sleep", "stall") or mode.startswith("clean:"):
     time.sleep(30)
-if mode == "stdin":
+if mode == "stdin" or mode.startswith("flaky:"):
     sys.stdin.readline()
 """
 
@@ -46,8 +58,16 @@ class _Env:
         self.services: list[RecordingService] = []
 
     def service(self, mode: str = "stdin", **kwargs) -> RecordingService:
+        counter = self.tmp_path / "runs.txt"
+
         def builder(ffmpeg_path: str, stream_url: str, output_path: Path) -> list[str]:
-            return [sys.executable, str(self.stub), str(output_path), mode]
+            return [
+                sys.executable,
+                str(self.stub),
+                str(output_path),
+                mode,
+                str(counter),
+            ]
 
         options = {
             "output_dir": self.tmp_path / "recordings",
@@ -297,6 +317,170 @@ def test_recovery_marks_legacy_recording_interrupted(tmp_path, qt_app):
     finally:
         service.shutdown()
         db.close()
+
+
+def _live_resolver(url: str = "https://example.invalid/resumed.flv"):
+    return lambda web_rid: StreamRefresh(live=True, stream_url=url)
+
+
+def test_unexpected_exit_is_resumed_with_new_file(env, qt_app):
+    service = env.service(
+        "flaky:1",
+        stream_resolver=_live_resolver(),
+        reconnect_delays_s=(0.05,),
+        poll_interval_s=0.03,
+    )
+    started: list[dict] = []
+    finished: list[dict] = []
+    reconnecting: list[dict] = []
+    service.recording_started.connect(lambda rid, snap: started.append(snap))
+    service.recording_finished.connect(lambda rid, snap: finished.append(snap))
+    service.recording_reconnecting.connect(lambda rid, snap: reconnecting.append(snap))
+
+    service.start_recording(env.room_id, "https://example.invalid/live.flv")
+    _wait_for(qt_app, lambda: len(started) == 2, timeout=15)
+
+    assert started[1]["resumed"] is True
+    assert started[1]["file_path"] != started[0]["file_path"]
+    assert reconnecting and reconnecting[0]["attempt"] == 1
+    assert service.is_recording(env.room_id) is True
+
+    second_path = Path(started[1]["file_path"])
+    _wait_for(qt_app, lambda: second_path.exists() and second_path.stat().st_size > 0)
+    service.stop_recording(env.room_id)
+    _wait_for(qt_app, lambda: len(finished) == 2)
+
+    assert finished[0]["status"] == "failed"
+    assert "自动续录" in finished[0]["error"]
+    assert finished[1]["status"] == "completed"
+    assert env.db.get_recording(finished[0]["recording_id"])["status"] == "failed"
+    assert env.db.get_recording(finished[1]["recording_id"])["status"] == "completed"
+
+
+def test_clean_exit_while_live_resumes_new_segment(env, qt_app):
+    """退出码 0 但直播仍在（网络 EOF）时按中断处理，新文件续录。"""
+    service = env.service(
+        "clean:1",
+        stream_resolver=_live_resolver(),
+        reconnect_delays_s=(0.05,),
+        poll_interval_s=0.03,
+    )
+    started: list[dict] = []
+    finished: list[dict] = []
+    service.recording_started.connect(lambda rid, snap: started.append(snap))
+    service.recording_finished.connect(lambda rid, snap: finished.append(snap))
+
+    service.start_recording(env.room_id, "https://example.invalid/live.flv")
+    _wait_for(qt_app, lambda: len(started) == 2, timeout=15)
+
+    assert started[1]["resumed"] is True
+    assert started[1]["file_path"] != started[0]["file_path"]
+    assert service.is_recording(env.room_id) is True
+    assert finished[0]["status"] == "failed"
+    assert finished[0]["recording_id"] != started[1]["recording_id"]
+
+
+def test_clean_exit_while_offline_stays_completed(env, qt_app):
+    """退出码 0 且重新解析确认已下播时，保持完成，不反复重试。"""
+    service = env.service(
+        "once",
+        stream_resolver=lambda web_rid: StreamRefresh(
+            live=False, error="直播已结束"
+        ),
+        reconnect_delays_s=(0.05,),
+        poll_interval_s=0.03,
+    )
+    started: list[dict] = []
+    finished: list[dict] = []
+    service.recording_started.connect(lambda rid, snap: started.append(snap))
+    service.recording_finished.connect(lambda rid, snap: finished.append(snap))
+
+    service.start_recording(env.room_id, "https://example.invalid/live.flv")
+    _wait_for(qt_app, lambda: bool(finished), timeout=15)
+    time.sleep(0.3)
+    qt_app.processEvents()
+
+    assert len(started) == 1
+    assert finished[0]["status"] == "completed"
+    assert service.is_recording(env.room_id) is False
+    assert env.db.list_recordings(status="recording") == []
+
+
+def test_resume_attempts_are_bounded(env, qt_app):
+    service = env.service(
+        "flaky:99",
+        stream_resolver=_live_resolver(),
+        reconnect_max_attempts=2,
+        reconnect_delays_s=(0.02,),
+        poll_interval_s=0.03,
+    )
+    started: list[dict] = []
+    finished: list[dict] = []
+    service.recording_started.connect(lambda rid, snap: started.append(snap))
+    service.recording_finished.connect(lambda rid, snap: finished.append(snap))
+
+    service.start_recording(env.room_id, "https://example.invalid/live.flv")
+    _wait_for(
+        qt_app,
+        lambda: len(finished) >= 3 and service.is_recording(env.room_id) is False,
+        timeout=20,
+    )
+
+    # 初始分段 + 2 次续录分段
+    assert len(started) == 3
+    assert finished[-1]["status"] == "failed"
+    assert "已尝试 2 次" in finished[-1]["error"]
+    assert env.db.list_recordings(status="recording") == []
+
+
+def test_confirmed_offline_during_resume_ends_session(env, qt_app):
+    service = env.service(
+        "flaky:99",
+        stream_resolver=lambda web_rid: StreamRefresh(
+            live=False, error="直播已结束"
+        ),
+        reconnect_max_attempts=3,
+        reconnect_delays_s=(0.02,),
+        poll_interval_s=0.03,
+    )
+    started: list[dict] = []
+    finished: list[dict] = []
+    service.recording_started.connect(lambda rid, snap: started.append(snap))
+    service.recording_finished.connect(lambda rid, snap: finished.append(snap))
+
+    service.start_recording(env.room_id, "https://example.invalid/live.flv")
+    _wait_for(qt_app, lambda: len(finished) == 2, timeout=15)
+
+    assert len(started) == 1
+    assert finished[-1]["recording_id"] is None
+    assert finished[-1]["status"] == "completed"
+    assert service.is_recording(env.room_id) is False
+
+
+def test_stop_while_waiting_for_resume_cancels_retry(env, qt_app):
+    service = env.service(
+        "flaky:99",
+        stream_resolver=_live_resolver(),
+        reconnect_delays_s=(5.0,),
+        poll_interval_s=0.03,
+    )
+    started: list[dict] = []
+    finished: list[dict] = []
+    reconnecting: list[dict] = []
+    service.recording_started.connect(lambda rid, snap: started.append(snap))
+    service.recording_finished.connect(lambda rid, snap: finished.append(snap))
+    service.recording_reconnecting.connect(lambda rid, snap: reconnecting.append(snap))
+
+    service.start_recording(env.room_id, "https://example.invalid/live.flv")
+    _wait_for(qt_app, lambda: bool(reconnecting), timeout=10)
+    service.stop_recording(env.room_id)
+    _wait_for(qt_app, lambda: len(finished) == 2)
+
+    assert len(started) == 1
+    assert finished[-1]["recording_id"] is None
+    assert finished[-1]["status"] == "failed"
+    assert "手动停止" in finished[-1]["error"]
+    assert service.is_recording(env.room_id) is False
 
 
 def test_unconfirmed_process_exit_is_not_marked_completed(env, qt_app, monkeypatch):

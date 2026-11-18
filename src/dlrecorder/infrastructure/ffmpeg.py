@@ -105,26 +105,54 @@ def build_record_command(
     ffmpeg_path: str,
     stream_url: str,
     output_path: Path,
+    *,
+    reconnect: bool = True,
+    reconnect_delay_max_s: int = 10,
+    rw_timeout_us: int = 15_000_000,
+    max_muxing_queue_size: int = 1024,
 ) -> list[str]:
     """构建默认录制命令：直接封装原始流到 MPEG-TS，不转码。
 
-    真实抖音流是否需要额外请求头（Referer/UA）或选择特定清晰度，需在获得真实
-    接口与流地址后验证；本命令不包含未经证实的平台参数。
+    输入侧参数（``-rw_timeout`` / ``-reconnect*``）必须位于 ``-i`` 之前，
+    否则会被当作输出参数而失效。``-reconnect`` 仅对 HTTP(S) 输入有效，本地
+    文件会因"Option not found"直接失败，因此只在网络流上启用。这里只开启
+    连接失败重连，不使用 ``-reconnect_at_eof`` / ``-reconnect_streamed``：
+    直播结束（EOF）时它们会反复重连已结束的流，使进程无法正常退出；进程级
+    异常退出由录制服务负责重新解析并续录。
     """
-    return [
+    is_http_input = stream_url.lower().startswith(("http://", "https://"))
+    command = [
         ffmpeg_path,
         "-hide_banner",
         "-loglevel",
         "warning",
         "-y",
-        "-i",
-        stream_url,
-        "-c",
-        "copy",
-        "-f",
-        "mpegts",
-        str(output_path),
     ]
+    if reconnect and is_http_input:
+        command.extend(
+            [
+                "-rw_timeout",
+                str(max(0, int(rw_timeout_us))),
+                "-reconnect",
+                "1",
+                "-reconnect_delay_max",
+                str(max(1, int(reconnect_delay_max_s))),
+            ]
+        )
+    command.extend(
+        [
+            "-i",
+            stream_url,
+            "-c",
+            "copy",
+            "-max_muxing_queue_size",
+            str(max(1, int(max_muxing_queue_size))),
+            "-f",
+            "mpegts",
+            str(output_path),
+        ]
+    )
+    return command
 
 
 class FFmpegProcess:

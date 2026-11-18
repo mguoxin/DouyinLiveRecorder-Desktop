@@ -130,3 +130,36 @@ def test_build_record_command_is_stream_copy(tmp_path):
     assert "-f" in command and "mpegts" in command
     assert command[-1] == str(output)
     assert "https://example.invalid/live.flv" in command
+
+
+def test_build_record_command_enables_input_reconnect(tmp_path):
+    command = build_record_command("ffmpeg", "https://example.invalid/live.flv", tmp_path / "a.ts")
+
+    # 重连与超时必须是输入侧参数，位于 -i 之前。
+    input_index = command.index("-i")
+    for option in ("-rw_timeout", "-reconnect", "-reconnect_delay_max"):
+        assert option in command
+        assert command.index(option) < input_index
+    assert command[command.index("-rw_timeout") + 1] == "15000000"
+    assert command[command.index("-reconnect") + 1] == "1"
+    # 不使用 EOF 重连，避免直播结束后进程反复拉起。
+    assert "-reconnect_at_eof" not in command
+    assert "-reconnect_streamed" not in command
+
+
+def test_build_record_command_skips_http_options_for_local_file(tmp_path):
+    # -reconnect 对本地文件输入无效，FFmpeg 会以 "Option not found" 失败。
+    command = build_record_command("ffmpeg", str(tmp_path / "local.flv"), tmp_path / "a.ts")
+
+    assert "-reconnect" not in command
+    assert "-rw_timeout" not in command
+
+
+def test_build_record_command_can_disable_reconnect(tmp_path):
+    command = build_record_command(
+        "ffmpeg", "https://example.invalid/live.flv", tmp_path / "a.ts", reconnect=False
+    )
+
+    assert "-reconnect" not in command
+    assert "-rw_timeout" not in command
+    assert command.index("-i") == 5

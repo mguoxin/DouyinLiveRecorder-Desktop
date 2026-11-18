@@ -490,6 +490,130 @@ def test_auto_record_starts_on_live_and_stops_with_monitor(tmp_path, qt_app):
         application.shutdown()
 
 
+def test_auto_record_does_not_restart_after_user_stop(tmp_path, qt_app):
+    """自动录制开启时，用户手动停止后不应被后续状态刷新重新拉起。"""
+    seed = Database(tmp_path / "data" / "app.db")
+    room_id = seed.add_room("auto-user-stop", "手动停止")
+    seed.set_setting("recording.auto_start", "1")
+    seed.close()
+
+    stub = tmp_path / "stub.py"
+    stub.write_text(RECORD_STUB, encoding="utf-8")
+
+    def builder(ffmpeg_path, stream_url, output_path):
+        return [sys.executable, str(stub), str(output_path), "stdin"]
+
+    application = Application(
+        base_dir=tmp_path,
+        recording_options={
+            "command_builder": builder,
+            "poll_interval_s": 0.05,
+            "stall_timeout_s": 0,
+            "stop_grace_s": 2.0,
+        },
+    )
+    started: list[dict] = []
+    finished: list[dict] = []
+    application.recording.recording_started.connect(
+        lambda rid, snap: started.append(snap)
+    )
+    application.recording.recording_finished.connect(
+        lambda rid, snap: finished.append(snap)
+    )
+    application.parser.set_response(
+        "auto-user-stop",
+        ParseResult.SUCCESS,
+        2,
+        stream_url="https://example.invalid/live.flv",
+    )
+    application.service.set_monitor_interval(0.2)
+    try:
+        application.service.start_monitor(room_id)
+        _wait_for(lambda: bool(started))
+
+        # 用户点击“停止录制”
+        table = application.main_window.room_list
+        table.selectRow(table._room_rows[room_id])
+        application.main_window._on_stop_recording()
+        _wait_for(lambda: bool(finished))
+        assert application.recording.is_recording(room_id) is False
+
+        # 再等待多次监控轮询（LIVE 状态重复上报）
+        for _ in range(40):
+            QApplication.processEvents()
+            time.sleep(0.03)
+
+        assert len(started) == 1, "用户手动停止后录制被自动重新拉起"
+        assert application.recording.is_recording(room_id) is False
+    finally:
+        application.shutdown()
+
+
+def test_auto_record_resumes_after_offline_following_manual_stop(tmp_path, qt_app):
+    """手动停止的抑制在确认下播后解除，下次开播可再次自动录制。"""
+    seed = Database(tmp_path / "data" / "app.db")
+    room_id = seed.add_room("auto-offline-reset", "下播解除")
+    seed.set_setting("recording.auto_start", "1")
+    seed.close()
+
+    stub = tmp_path / "stub.py"
+    stub.write_text(RECORD_STUB, encoding="utf-8")
+
+    def builder(ffmpeg_path, stream_url, output_path):
+        return [sys.executable, str(stub), str(output_path), "stdin"]
+
+    application = Application(
+        base_dir=tmp_path,
+        recording_options={
+            "command_builder": builder,
+            "poll_interval_s": 0.05,
+            "stall_timeout_s": 0,
+            "stop_grace_s": 2.0,
+        },
+    )
+    started: list[dict] = []
+    finished: list[dict] = []
+    application.recording.recording_started.connect(
+        lambda rid, snap: started.append(snap)
+    )
+    application.recording.recording_finished.connect(
+        lambda rid, snap: finished.append(snap)
+    )
+    application.parser.set_response(
+        "auto-offline-reset",
+        ParseResult.SUCCESS,
+        2,
+        stream_url="https://example.invalid/live.flv",
+    )
+    application.service.set_monitor_interval(0.2)
+    try:
+        application.service.start_monitor(room_id)
+        _wait_for(lambda: bool(started))
+
+        table = application.main_window.room_list
+        table.selectRow(table._room_rows[room_id])
+        application.main_window._on_stop_recording()
+        _wait_for(lambda: bool(finished))
+
+        # 模拟真实下播，再重新开播
+        application.parser.set_response("auto-offline-reset", ParseResult.SUCCESS, 4)
+        _wait_for(
+            lambda: application.service.get_room(room_id).state.last_confirmed_room_state
+            == "OFFLINE_CONFIRMED",
+            timeout=5.0,
+        )
+        application.parser.set_response(
+            "auto-offline-reset",
+            ParseResult.SUCCESS,
+            2,
+            stream_url="https://example.invalid/live.flv",
+        )
+        _wait_for(lambda: len(started) == 2, timeout=5.0)
+        assert application.recording.is_recording(room_id) is True
+    finally:
+        application.shutdown()
+
+
 def test_room_removal_stops_recording_and_keeps_history(tmp_path, qt_app):
     seed = Database(tmp_path / "data" / "app.db")
     room_id = seed.add_room("remove-rec", "待删除录制")

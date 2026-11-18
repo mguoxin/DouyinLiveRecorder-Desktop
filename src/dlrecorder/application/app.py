@@ -24,7 +24,7 @@ from ..infrastructure.http_client import UrllibHttpClient
 from ..infrastructure.logging_config import setup_logging
 from ..presentation.main_window import MainWindow
 from .monitor_service import MonitorService
-from .recording_service import RecordingService
+from .recording_service import RecordingService, StreamRefresh
 from .settings_service import AppSettings, SettingsService
 
 logger = logging.getLogger(__name__)
@@ -110,9 +110,12 @@ class Application:
         options.setdefault("ffmpeg_path", current.ffmpeg_path)
         options.setdefault("min_free_mb", float(current.min_free_mb))
         options.setdefault("session_id_provider", self.service.get_session_id)
+        options.setdefault("stream_resolver", self._refresh_stream)
         self.recording = RecordingService(self.db, **options)
         self._auto_record = self.db.get_setting(AUTO_RECORD_SETTING, "0") == "1"
         self._auto_pending: set[int] = set()
+        # 用户手动停止过录制的房间：在下一次确认下播或再次手动开始前不再自动启动。
+        self._auto_suppressed: set[int] = set()
         self._shutdown_done = False
         self._connect_recording()
 
@@ -125,6 +128,26 @@ class Application:
             on_settings_applied=self._apply_settings,
         )
         self.main_window.auto_record_toggled.connect(self._set_auto_record)
+        self.main_window.recording_stop_requested.connect(
+            self._on_manual_stop_requested
+        )
+
+    def _refresh_stream(self, web_rid: str) -> StreamRefresh:
+        """重新解析房间，供录制中断后的自动续录使用（在录制线程中同步调用）。"""
+        try:
+            detail = self.parser.fetch_and_parse_detail(web_rid)
+        except Exception as e:  # noqa: BLE001 - 解析失败只影响本轮续录
+            logger.exception("自动续录重新解析失败 web_rid=%s", web_rid)
+            return StreamRefresh(live=None, error=str(e))
+        if detail.result != ParseResult.SUCCESS:
+            return StreamRefresh(live=None, error=f"解析失败: {detail.result}")
+        if detail.status == 4:
+            return StreamRefresh(live=False, error="直播已结束")
+        if detail.stream_url:
+            return StreamRefresh(live=True, stream_url=detail.stream_url)
+        if detail.status == 2:
+            return StreamRefresh(live=None, error="直播中但未取得流地址")
+        return StreamRefresh(live=None, error="未能确认直播状态")
 
     def _connect_recording(self) -> None:
         self.service.room_state_updated.connect(self._on_room_state_updated)
@@ -142,11 +165,15 @@ class Application:
             return
         confirmed = snapshot.get("last_confirmed_room_state")
         if confirmed == "OFFLINE_CONFIRMED":
+            # 确认下播后解除手动停止抑制：下次开播仍可自动录制。
+            self._auto_suppressed.discard(room_id)
             if self.recording.is_recording(room_id):
                 logger.info("房间 %s 已确认下播，停止自动录制", room_id)
                 self.recording.stop_recording(room_id)
             return
         if confirmed != "LIVE":
+            return
+        if room_id in self._auto_suppressed:
             return
         if room_id in self._auto_pending or self.recording.is_recording(room_id):
             return
@@ -156,15 +183,23 @@ class Application:
         self._auto_pending.add(room_id)
         self.recording.start_recording(room_id, stream_url)
 
+    def _on_manual_stop_requested(self, room_id: int) -> None:
+        """用户主动停止录制：抑制该房间的自动录制，直到下播或再次手动开始。"""
+        self._auto_suppressed.add(room_id)
+        logger.info("房间 %s 已手动停止录制，自动录制暂停", room_id)
+
     def _on_task_stopped(self, room_id: int) -> None:
         if self.recording.is_recording(room_id):
             self.recording.stop_recording(room_id)
 
     def _on_room_removed(self, room_id: int) -> None:
+        self._auto_suppressed.discard(room_id)
         if self.recording.is_recording(room_id):
             self.recording.stop_recording(room_id)
 
     def _on_recording_started(self, room_id: int, snapshot: dict) -> None:
+        # 能启动即说明是用户手动开始（自动启动已被抑制），解除抑制。
+        self._auto_suppressed.discard(room_id)
         self._auto_pending.discard(room_id)
 
     def _on_recording_finished(self, room_id: int, snapshot: dict) -> None:
@@ -188,6 +223,9 @@ class Application:
     def _set_auto_record(self, enabled: bool) -> None:
         """持久化自动录制开关；关闭只影响后续自动启动。"""
         self._auto_record = enabled
+        if enabled:
+            # 重新开启自动录制视为用户要求恢复，清除此前的手动停止抑制。
+            self._auto_suppressed.clear()
         self.db.set_setting(AUTO_RECORD_SETTING, "1" if enabled else "0")
         logger.info("自动录制已%s", "开启" if enabled else "关闭")
 
