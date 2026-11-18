@@ -75,7 +75,8 @@ src/dlrecorder/douyin/engine/
 | 打包版界面解析 | **通过**：点击"开始监控"后 15 s 内，界面显示 `确认状态=OFFLINE_CONFIRMED`、`最近解析=SUCCESS`（真实网络请求） | 截图级 UIA 读取 |
 | 数据迁移演练 | **通过**：`integrity_check=ok`，房间/录制/Session 计数一致，无孤儿记录，路径已改写为新包 | `%TEMP%\dlr-p0\migtest2` |
 | 迁移后正式启动 | **通过**：0.2.0 发布目录直接读取迁移数据，加载房间 2 并完成真实解析 | `release\DouyinLiveRecorder-0.2.0-win64\data\logs\app.log` |
-| 真实抖音直播录制 | **待执行**（验证时已配置房间均未开播） | 后台监听脚本 `watch_and_record.py`，开播后按 `docs/DELIVERY_0.2.0.md` §4 复验 |
+| 真实抖音直播录制 | **通过**（2026-11-18 18:44:39–18:45:40，`web_rid=476806339740`，主播"户外发"） | 引擎解析 `status=2` 并取得 FLV；自动开始录制；文件 20/40/60 s 分别为 6,815,744 / 12,845,056 / 19,136,512 B；停止后 `completed` 19,214,916 B，与磁盘一致；全解码 `exit=0`；FFmpeg 残留 0；Session `stopped` |
+| 打包版真实录制 | **通过**（2026-11-18 18:47:31–18:50:56，同一房间） | `release\DouyinLiveRecorder-0.2.0-win64\DouyinLiveRecorder.exe`（日志 `解析器: EngineDouyinParser`）；自动开始 1 次 `pid=20052`；205 s 后收尾 `completed` 63,374,236 B；`Duration 00:03:28.31`、H.264 1088x1920 + AAC；DB `file_size=63374236 session_id=5` 与磁盘一致；全解码退出码 0（47 条 DTS 告警仅位于 0.02–0.03 s 起始处）；FFmpeg 残留 0 |
 
 ## 7. 已知限制与后续路线
 

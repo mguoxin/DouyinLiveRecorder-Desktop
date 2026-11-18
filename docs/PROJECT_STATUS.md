@@ -35,7 +35,7 @@
 | HTTP 层 | 已完成 | 专用执行器、关闭串行化、传输错误分类；真实 HTTPS 请求已实测可达 |
 | 解析器 | 已完成（0.2.0 切换上游引擎） | 主链路 `web enter + a_bogus`（约 4 KB JSON，0.39–0.78 s/房间），回退公开页 React Flight；风控单独归类 `RISK_CONTROL`；实测离线房间 `status=4 -> OFFLINE_CONFIRMED`、无效 ID 不误判直播 |
 | FFmpeg 管理 | 已完成 | 启停、q/terminate/kill、退出码、输出增长检测、卡死超时 |
-| 真实 FFmpeg 录制 | 已完成（本地与指定真实直播流） | 内置 FFmpeg 9.0.2；本地媒体、本地限速流及真实抖音流均写出非空文件并正常收尾 |
+| 真实 FFmpeg 录制 | 已完成（0.2.0 真实验证 2026-11-18） | 内置 FFmpeg 9.0.2；真实抖音房间 `476806339740` 源码版录制 61 s：19,214,916 B；打包版录制 205 s：63,374,236 B；两次 DB 大小与磁盘一致、全解码退出码 0、无残留进程 |
 | 录制服务 | 已完成 | 状态机、历史持久化、异常恢复（interrupted）、多房间独立 |
 | 自动录制 | 已完成 | 确认 LIVE 后启动；确认下播 / 停止监控 / 删除房间时停止；开关持久化 |
 | 录制历史 | 已完成 | 只读历史对话框；不提供误删入口；文件路径保留 |
@@ -149,6 +149,14 @@
   - 停止监控后关闭主窗口，进程 `pid=21400` 退出码 0；
   - 数据核验：`rooms(1,'95694179922')`、`recordings(completed,23837836,session_id=1)`、`monitor_sessions(stopped)`，日志 `录制完成 ... size=23837836 requested=True`；
   - 全程使用隔离工作目录，未读取或改写正式 `data/app.db`。
+- 0.2.0 打包版真实直播录制（隔离目录 `%TEMP%\dlr-p0\pkg_e2e`，真实房间 `476806339740`）：
+  - 启动 `release\DouyinLiveRecorder-0.2.0-win64\DouyinLiveRecorder.exe`，日志确认 `解析器: EngineDouyinParser`；
+  - 界面选中第 3 行后点击“开始监控”，18:47:31 自动开始录制（`pid=20052`），仅 1 次；
+  - 18:50:56 关闭主窗口触发收尾，`completed` 63,374,236 B（205 s）；
+  - 文件 `Duration 00:03:28.31`，H.264 High 1088x1920 22fps + AAC LC 48kHz；
+  - DB：`recordings.id=2 / status=completed / file_size=63374236 / session_id=5`，与磁盘一致；
+  - 全解码 `ffmpeg -v error -i ... -f null -` 退出码 0（47 条 DTS 告警均位于 0.02–0.03 s 起始处），FFmpeg 残留 0；
+  - 证据详见 `docs/DELIVERY_0.2.0.md` §4。
 - 本机性能基准（Mock、1s 监控间隔、10s 运行，18 逻辑处理器 / 31.47GB）：
   - 初始化 0.068s；逐个启动 20 房间 2.019s；
   - 空闲工作集 58.04MB，峰值 59.04MB；
