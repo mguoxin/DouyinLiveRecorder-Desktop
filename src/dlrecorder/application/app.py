@@ -10,7 +10,7 @@ import os
 import sys
 import urllib.request
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 from PySide6.QtWidgets import QApplication
 
@@ -50,7 +50,11 @@ def _default_base_dir() -> Path:
     return Path.cwd()
 
 
-def _build_parser() -> DouyinParser:
+def _build_parser(
+    *,
+    quality: str = "UHD",
+    cookie_provider: Optional[Callable[[], Optional[str]]] = None,
+) -> DouyinParser:
     """生产默认使用真实解析器；``DLR_PARSER=mock`` 仅用于开发/自动化验证。
 
     Mock 模式下可用 ``DLR_MOCK_STREAM_URL`` 指定本地媒体或本地测试流，
@@ -61,12 +65,18 @@ def _build_parser() -> DouyinParser:
         stream_url = os.environ.get("DLR_MOCK_STREAM_URL", "").strip()
         parser.set_default(ParseResult.SUCCESS, 2, stream_url or None)
         return parser
-    # 匿名 Cookie 会话（ttwid 等），不读取或保存用户凭据。
+    # 匿名 Cookie 会话（ttwid 等）；用户 Cookie 由 CredentialStore 加密保存，
+    # 每次解析时按需读取，不进入日志与配置表。
     # 主链路：上游引擎（web enter + a_bogus）；回退：公开直播页内嵌数据。
     jar = http.cookiejar.CookieJar()
     opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar))
     legacy = RealDouyinParser(UrllibHttpClient(opener), timeout_s=15.0)
-    return EngineDouyinParser(timeout_s=10.0, fallback=legacy)
+    return EngineDouyinParser(
+        quality=quality,
+        timeout_s=10.0,
+        fallback=legacy,
+        cookie_provider=cookie_provider,
+    )
 
 
 class Application:
@@ -100,8 +110,10 @@ class Application:
         self.settings = SettingsService(self.db, self.config)
         current = self.settings.load()
         logger.info("FFmpeg 路径: %s", current.ffmpeg_path)
-        self.parser = _build_parser()
-        logger.info("解析器: %s", type(self.parser).__name__)
+        self.parser = _build_parser(
+            quality=current.quality, cookie_provider=self.settings.load_cookie
+        )
+        logger.info("解析器: %s，清晰度=%s", type(self.parser).__name__, current.quality)
         self.service = MonitorService(
             self.db,
             self.parser,
@@ -224,6 +236,10 @@ class Application:
             self.recording.set_output_dir(settings.recordings_dir)
             self.recording.set_min_free_mb(settings.min_free_mb)
             self.service.set_monitor_interval(settings.monitor_interval_s)
+            if hasattr(self.parser, "set_quality"):
+                self.parser.set_quality(settings.quality)
+            if hasattr(self.parser, "set_cookie"):
+                self.parser.set_cookie(self.settings.load_cookie())
         except (OSError, ValueError) as e:
             logger.error("应用运行时设置失败: %s", e, exc_info=True)
             return

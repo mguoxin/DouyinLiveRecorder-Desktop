@@ -181,3 +181,100 @@ def test_settings_dialog_blocks_invalid_input(tmp_path, qt_app, service):
         assert dialog.error_label.isVisible() or "FFmpeg" in dialog.error_label.text()
     finally:
         dialog.close()
+
+
+def test_quality_default_and_roundtrip(service, monkeypatch):
+    settings_service, db, config = service
+    monkeypatch.setattr(
+        "dlrecorder.application.settings_service.find_local_ffmpeg", lambda: "ffmpeg"
+    )
+    assert settings_service.load().quality == "UHD"
+
+    saved = settings_service.save(
+        AppSettings("ffmpeg", config.recordings_dir, 60.0, 128, "HD")
+    )
+    assert saved.quality == "HD"
+    assert db.get_setting("recording.quality") == "HD"
+    assert settings_service.load().quality == "HD"
+
+
+def test_invalid_stored_quality_falls_back(service):
+    settings_service, db, _config = service
+    db.set_setting("recording.quality", "ULTRA")
+    assert settings_service.load().quality == "UHD"
+
+
+def test_validate_cookie_rules():
+    from dlrecorder.application.settings_service import validate_cookie
+
+    assert validate_cookie("sessionid=abc; ttwid=xyz") == "sessionid=abc; ttwid=xyz"
+    assert validate_cookie("Cookie: sessionid=abc") == "sessionid=abc"
+    with pytest.raises(ValueError):
+        validate_cookie("   ")
+    with pytest.raises(ValueError):
+        validate_cookie("sessionid")
+    with pytest.raises(ValueError):
+        validate_cookie("sessionid=a\nb")
+    with pytest.raises(ValueError):
+        validate_cookie("a=" + "b" * 9000)
+
+
+@pytest.mark.skipif(
+    __import__("sys").platform != "win32", reason="DPAPI 仅在 Windows 可用"
+)
+def test_credential_store_encrypts_cookie(tmp_path):
+    from dlrecorder.infrastructure.credential_store import CredentialStore
+
+    store = CredentialStore(tmp_path / "data")
+    cookie = "sessionid=very-secret-value; ttwid=abc"
+    store.save_cookie(cookie)
+
+    assert store.has_cookie()
+    assert store.load_cookie() == cookie
+    raw = store.path.read_bytes()
+    assert b"very-secret-value" not in raw
+
+    assert "已配置" in store.describe()
+    store.clear_cookie()
+    assert store.load_cookie() is None
+    assert not store.has_cookie()
+
+
+@pytest.mark.skipif(
+    __import__("sys").platform != "win32", reason="DPAPI 仅在 Windows 可用"
+)
+def test_settings_dialog_saves_quality_and_cookie(tmp_path, qt_app, service):
+    from dlrecorder.presentation.widgets import SettingsDialog
+
+    settings_service, db, _config = service
+    dialog = SettingsDialog(settings_service, settings_service.load())
+    try:
+        index = dialog.quality_combo.findData("HD")
+        dialog.quality_combo.setCurrentIndex(index)
+        dialog.cookie_edit.setText("sessionid=dialog-secret; ttwid=abc")
+        dialog._on_accept()
+
+        assert dialog.result_settings is not None
+        assert dialog.result_settings.quality == "HD"
+        assert settings_service.load_cookie() == "sessionid=dialog-secret; ttwid=abc"
+        stored = [
+            db.get_setting(key, "")
+            for key in (
+                "recording.ffmpeg_path",
+                "recording.output_dir",
+                "monitor.interval_s",
+                "storage.min_free_mb",
+                "recording.quality",
+            )
+        ]
+        assert not any("dialog-secret" in value for value in stored)
+    finally:
+        dialog.close()
+
+    dialog2 = SettingsDialog(settings_service, settings_service.load())
+    try:
+        dialog2._on_clear_cookie()
+        assert settings_service.load_cookie() is None
+        assert "未配置" in dialog2.cookie_status.text()
+    finally:
+        dialog2.close()

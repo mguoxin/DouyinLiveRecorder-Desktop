@@ -1,7 +1,8 @@
 """软件设置服务：读取、校验并持久化用户可调参数。
 
 设置存储在既有 ``settings`` 表中，不改变数据库 Schema。
-只保存路径、间隔和阈值，不保存任何凭据。
+只保存路径、间隔、阈值和清晰度，不保存任何凭据；Cookie 由
+``CredentialStore`` 使用 Windows DPAPI 单独加密存放。
 """
 from __future__ import annotations
 
@@ -12,6 +13,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from ..infrastructure.config import AppConfig
+from ..infrastructure.credential_store import CredentialStore
 from ..infrastructure.db import Database
 from ..infrastructure.ffmpeg import find_local_ffmpeg
 
@@ -21,6 +23,7 @@ KEY_FFMPEG_PATH = "recording.ffmpeg_path"
 KEY_RECORDINGS_DIR = "recording.output_dir"
 KEY_MONITOR_INTERVAL = "monitor.interval_s"
 KEY_MIN_FREE_MB = "storage.min_free_mb"
+KEY_QUALITY = "recording.quality"
 
 DEFAULT_MONITOR_INTERVAL_S = 120.0
 DEFAULT_MIN_FREE_MB = 512
@@ -29,6 +32,19 @@ MIN_MONITOR_INTERVAL_S = 5.0
 MAX_MONITOR_INTERVAL_S = 3600.0
 MAX_MIN_FREE_MB = 1024 * 1024
 MAX_FFMPEG_PATH_LEN = 260
+
+# 与上游 ``QUALITY_MAPPING`` 一致；OD 为原画，可能对部分房间不可用。
+QUALITY_OPTIONS: tuple[tuple[str, str], ...] = (
+    ("OD", "原画（OD）"),
+    ("UHD", "超清（UHD）"),
+    ("HD", "高清（HD）"),
+    ("SD", "标清（SD）"),
+    ("LD", "流畅（LD）"),
+)
+DEFAULT_QUALITY = "UHD"
+_QUALITY_CODES = {code for code, _label in QUALITY_OPTIONS}
+
+MAX_COOKIE_LEN = 8192
 
 
 @dataclass(frozen=True)
@@ -39,6 +55,7 @@ class AppSettings:
     recordings_dir: Path
     monitor_interval_s: float
     min_free_mb: int
+    quality: str = DEFAULT_QUALITY
 
 
 def validate_ffmpeg_path(value: str) -> str:
@@ -91,12 +108,49 @@ def validate_min_free_mb(value: Any) -> int:
     return number
 
 
+def validate_quality(value: Any) -> str:
+    text = str(value or "").strip().upper()
+    if text not in _QUALITY_CODES:
+        allowed = "/".join(code for code, _ in QUALITY_OPTIONS)
+        raise ValueError(f"清晰度只能是 {allowed}")
+    return text
+
+
+def quality_label(code: str) -> str:
+    for item_code, label in QUALITY_OPTIONS:
+        if item_code == code:
+            return label
+    return code
+
+
+def validate_cookie(value: str) -> str:
+    """校验 Cookie 文本；只做格式检查，不联网验证。"""
+    text = (value or "").strip()
+    if text.lower().startswith("cookie:"):
+        text = text[len("cookie:"):].strip()
+    if not text:
+        raise ValueError("Cookie 不能为空")
+    if len(text) > MAX_COOKIE_LEN:
+        raise ValueError(f"Cookie 不能超过 {MAX_COOKIE_LEN} 个字符")
+    if any(ord(ch) < 32 or ord(ch) == 127 for ch in text):
+        raise ValueError("Cookie 不能包含换行或控制字符")
+    if "=" not in text:
+        raise ValueError("Cookie 需为 key=value; key2=value2 形式")
+    return text
+
+
 class SettingsService:
     """设置读写与校验。"""
 
-    def __init__(self, db: Database, config: AppConfig) -> None:
+    def __init__(
+        self,
+        db: Database,
+        config: AppConfig,
+        credential_store: Optional[CredentialStore] = None,
+    ) -> None:
         self._db = db
         self._config = config
+        self._credentials = credential_store or CredentialStore(config.data_dir)
 
     def defaults(self) -> AppSettings:
         return AppSettings(
@@ -104,6 +158,7 @@ class SettingsService:
             recordings_dir=self._config.recordings_dir,
             monitor_interval_s=DEFAULT_MONITOR_INTERVAL_S,
             min_free_mb=DEFAULT_MIN_FREE_MB,
+            quality=DEFAULT_QUALITY,
         )
 
     def load(self) -> AppSettings:
@@ -123,6 +178,9 @@ class SettingsService:
             ),
             min_free_mb=self._load_value(
                 KEY_MIN_FREE_MB, defaults.min_free_mb, validate_min_free_mb
+            ),
+            quality=self._load_value(
+                KEY_QUALITY, defaults.quality, validate_quality
             ),
         )
         # 旧版本可能保存了默认命令名；若项目内已内置 FFmpeg，则优先使用内置版本。
@@ -149,6 +207,7 @@ class SettingsService:
             recordings_dir=validate_recordings_dir(settings.recordings_dir),
             monitor_interval_s=validate_monitor_interval(settings.monitor_interval_s),
             min_free_mb=validate_min_free_mb(settings.min_free_mb),
+            quality=validate_quality(settings.quality),
         )
         self._db.set_setting(KEY_FFMPEG_PATH, normalized.ffmpeg_path)
         self._db.set_setting(KEY_RECORDINGS_DIR, str(normalized.recordings_dir))
@@ -156,14 +215,32 @@ class SettingsService:
             KEY_MONITOR_INTERVAL, str(normalized.monitor_interval_s)
         )
         self._db.set_setting(KEY_MIN_FREE_MB, str(normalized.min_free_mb))
+        self._db.set_setting(KEY_QUALITY, normalized.quality)
         logger.info(
-            "设置已保存: ffmpeg=%s recordings=%s interval=%ss min_free=%sMB",
+            "设置已保存: ffmpeg=%s recordings=%s interval=%ss min_free=%sMB quality=%s",
             normalized.ffmpeg_path,
             normalized.recordings_dir,
             normalized.monitor_interval_s,
             normalized.min_free_mb,
+            normalized.quality,
         )
         return normalized
+
+    # ---------- Cookie（DPAPI 加密，不进入 settings 表与日志） ----------
+    def load_cookie(self) -> Optional[str]:
+        return self._credentials.load_cookie()
+
+    def save_cookie(self, cookie: str) -> None:
+        self._credentials.save_cookie(validate_cookie(cookie))
+
+    def clear_cookie(self) -> None:
+        self._credentials.clear_cookie()
+
+    def cookie_status(self) -> str:
+        return self._credentials.describe()
+
+    def has_cookie(self) -> bool:
+        return self._credentials.has_cookie()
 
     def backup_database(self, dest: Path) -> Path:
         """创建一致性备份；任何失败都会抛出异常，由调用方提示用户。"""

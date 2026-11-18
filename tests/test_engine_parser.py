@@ -123,3 +123,52 @@ def test_quality_index_matches_upstream_mapping():
     assert quality_index("SD") == ("SD", 3)
     assert quality_index("LD") == ("LD", 4)
     assert quality_index("") == ("OD", 0)
+
+
+def test_snapshot_receives_configured_quality_and_cookie():
+    seen = {}
+
+    def provider(rid, **kwargs):
+        seen.update(kwargs)
+        return _live_snapshot()
+
+    parser = EngineDouyinParser(
+        quality="HD",
+        snapshot_provider=provider,
+        cookie_provider=lambda: "sessionid=abc; ttwid=xyz",
+    )
+    parser.fetch_and_parse_detail("123")
+    assert seen["quality"] == "HD"
+    assert seen["cookie"] == "sessionid=abc; ttwid=xyz"
+
+
+def test_runtime_quality_and_cookie_updates_take_effect():
+    seen = {}
+
+    def provider(rid, **kwargs):
+        seen.clear()
+        seen.update(kwargs)
+        return _live_snapshot()
+
+    parser = EngineDouyinParser(snapshot_provider=provider)
+    parser.set_quality("LD")
+    parser.set_cookie("sessionid=one")
+    parser.fetch_and_parse_detail("123")
+    assert seen["quality"] == "LD"
+    assert seen["cookie"] == "sessionid=one"
+
+    parser.set_cookie(None)
+    parser.fetch_and_parse_detail("123")
+    assert seen["cookie"] is None
+
+
+def test_cookie_provider_failure_falls_back_to_anonymous():
+    def broken():
+        raise OSError("凭据不可读")
+
+    parser = EngineDouyinParser(
+        snapshot_provider=lambda rid, **kw: _live_snapshot(),
+        cookie_provider=broken,
+    )
+    detail = parser.fetch_and_parse_detail("123")
+    assert detail.result == ParseResult.SUCCESS

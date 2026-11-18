@@ -8,6 +8,8 @@ from typing import Optional
 import shiboken6
 from PySide6.QtCore import QObject, Qt, Signal
 from PySide6.QtWidgets import (
+    QCheckBox,
+    QComboBox,
     QDialog,
     QDialogButtonBox,
     QFileDialog,
@@ -28,6 +30,7 @@ from ..application.settings_service import (
     MAX_MIN_FREE_MB,
     MIN_MONITOR_INTERVAL_S,
     MAX_MONITOR_INTERVAL_S,
+    QUALITY_OPTIONS,
     AppSettings,
     SettingsService,
 )
@@ -337,9 +340,33 @@ class SettingsDialog(QDialog):
         self.min_free_spin.setSuffix(" MB")
         self.min_free_spin.setValue(int(current.min_free_mb))
 
+        # 录制清晰度
+        self.quality_combo = QComboBox()
+        for code, label in QUALITY_OPTIONS:
+            self.quality_combo.addItem(label, code)
+        index = self.quality_combo.findData(current.quality)
+        self.quality_combo.setCurrentIndex(index if index >= 0 else 0)
+
+        # 抖音 Cookie（DPAPI 加密保存，界面不回显明文）
+        self.cookie_edit = QLineEdit()
+        self.cookie_edit.setEchoMode(QLineEdit.EchoMode.Password)
+        self.cookie_edit.setPlaceholderText("留空表示不修改；已保存的 Cookie 不会回显")
+        self.btn_import_cookie = QPushButton("导入文件...")
+        self.btn_clear_cookie = QPushButton("清除")
+        self.chk_show_cookie = QCheckBox("显示")
+        cookie_row = QHBoxLayout()
+        cookie_row.addWidget(self.cookie_edit, 1)
+        cookie_row.addWidget(self.btn_import_cookie)
+        cookie_row.addWidget(self.chk_show_cookie)
+        cookie_row.addWidget(self.btn_clear_cookie)
+        self.cookie_status = QLabel(self._service.cookie_status())
+        self.cookie_status.setWordWrap(True)
+
         hint = QLabel(
-            "监控间隔与录制目录的修改对之后启动的监控/录制生效；"
+            "监控间隔、录制目录与清晰度的修改对之后启动的监控/录制生效；"
             "磁盘最低剩余空间为 0 表示不检查。程序不会自动删除任何录制文件。"
+            "Cookie 使用 Windows DPAPI 加密保存，仅本机当前用户可解密，"
+            "不会写入数据库、日志或发布包；未配置时按匿名访问。"
         )
         hint.setWordWrap(True)
 
@@ -354,6 +381,9 @@ class SettingsDialog(QDialog):
         form.addRow("录制目录", output_row)
         form.addRow("监控间隔", self.interval_spin)
         form.addRow("磁盘最低剩余空间", self.min_free_spin)
+        form.addRow("录制清晰度", self.quality_combo)
+        form.addRow("抖音 Cookie", cookie_row)
+        form.addRow("", self.cookie_status)
         form.addRow(hint)
         form.addRow(self.error_label)
 
@@ -368,6 +398,56 @@ class SettingsDialog(QDialog):
         self.btn_browse_ffmpeg.clicked.connect(self._on_browse_ffmpeg)
         self.btn_detect_ffmpeg.clicked.connect(self._on_detect_ffmpeg)
         self.btn_browse_output.clicked.connect(self._on_browse_output)
+        self.btn_import_cookie.clicked.connect(self._on_import_cookie)
+        self.btn_clear_cookie.clicked.connect(self._on_clear_cookie)
+        self.chk_show_cookie.toggled.connect(self._on_toggle_cookie_visible)
+
+    def _refresh_cookie_status(self) -> None:
+        self.cookie_status.setText(self._service.cookie_status())
+
+    def _on_toggle_cookie_visible(self, visible: bool) -> None:
+        self.cookie_edit.setEchoMode(
+            QLineEdit.EchoMode.Normal if visible else QLineEdit.EchoMode.Password
+        )
+
+    def _on_import_cookie(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self, "选择 Cookie 文本文件", "", "文本文件 (*.txt *.json);;所有文件 (*)"
+        )
+        if not path:
+            return
+        try:
+            text = Path(path).read_text(encoding="utf-8", errors="replace")
+        except OSError as e:
+            self.error_label.setText(f"读取 Cookie 文件失败: {e}")
+            self.error_label.show()
+            return
+        self.cookie_edit.setText(text.strip()[:8192])
+
+    def _on_clear_cookie(self) -> None:
+        try:
+            self._service.clear_cookie()
+        except OSError as e:
+            self.error_label.setText(f"清除 Cookie 失败: {e}")
+            self.error_label.show()
+            return
+        self.cookie_edit.clear()
+        self._refresh_cookie_status()
+
+    def _save_cookie_if_needed(self) -> bool:
+        """保存用户新输入的 Cookie；返回是否可继续保存其他设置。"""
+        text = self.cookie_edit.text().strip()
+        if not text:
+            return True
+        try:
+            self._service.save_cookie(text)
+        except (ValueError, OSError, RuntimeError) as e:
+            self.error_label.setText(f"Cookie 保存失败: {e}")
+            self.error_label.show()
+            return False
+        self.cookie_edit.clear()
+        self._refresh_cookie_status()
+        return True
 
     def _on_browse_ffmpeg(self) -> None:
         path, _ = QFileDialog.getOpenFileName(
@@ -396,11 +476,14 @@ class SettingsDialog(QDialog):
             self.output_edit.setText(path)
 
     def _on_accept(self) -> None:
+        if not self._save_cookie_if_needed():
+            return
         candidate = AppSettings(
             ffmpeg_path=self.ffmpeg_edit.text(),
             recordings_dir=Path(self.output_edit.text()),
             monitor_interval_s=float(self.interval_spin.value()),
             min_free_mb=self.min_free_spin.value(),
+            quality=self.quality_combo.currentData(),
         )
         try:
             saved = self._service.save(candidate)
