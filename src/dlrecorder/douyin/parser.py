@@ -150,11 +150,21 @@ def extract_stream_url(body_bytes: bytes) -> Optional[str]:
     return _extract_room_stream_url(rooms[0])
 
 
+_RISK_CONTROL_MARKERS = ("验证码中间页", "sec_sdk_build", "captcha")
+
+
+def _is_risk_control_page(body_bytes: bytes) -> bool:
+    """识别抖音安全验证中间页（标题或验证脚本特征）。"""
+    text = body_bytes.decode("utf-8", "replace").lower()
+    return any(marker.lower() in text for marker in _RISK_CONTROL_MARKERS)
+
+
 class RealDouyinParser(DouyinParser):
     """真实抖音解析器：读取公开直播页内嵌数据，不执行页面 JavaScript。
 
     仅捕获可恢复的传输层异常（超时/连接等），程序缺陷照常向上抛出。
-    页面缺少目标房间数据时返回 ``API_MALFORMED``，不擅自判定下播或不存在。
+    页面为风控验证中间页时返回 ``RISK_CONTROL``；缺少目标房间数据时返回
+    ``API_MALFORMED``，均不擅自判定下播或不存在。
     """
 
     LIVE_PAGE_URL = "https://www.douyin.com/root/live/"
@@ -229,6 +239,12 @@ class RealDouyinParser(DouyinParser):
 
         room = _extract_page_room(resp.body, rid)
         if room is None:
+            if _is_risk_control_page(resp.body):
+                logger.warning(
+                    "抖音风控验证页 web_rid=%s：无法获取房间数据，监控将按间隔自动重试",
+                    rid,
+                )
+                return ParseDetail(ParseResult.RISK_CONTROL)
             return ParseDetail(ParseResult.API_MALFORMED)
         return ParseDetail(
             result=ParseResult.SUCCESS,

@@ -90,7 +90,18 @@ class RoomListWidget(QTableWidget):
         confirmed = snapshot.get("last_confirmed_room_state") or "未知"
         parse_result = snapshot.get("last_parse_result") or "—"
         self.item(row, 3).setText(str(confirmed))
-        self.item(row, 4).setText(str(parse_result))
+        item = self.item(row, 4)
+        text = str(parse_result)
+        if text == "RISK_CONTROL":
+            # 抖音风控验证页：向用户解释为什么无法确认直播/触发录制。
+            item.setText("风控验证")
+            item.setToolTip(
+                "抖音返回安全验证页面，暂时无法获取直播状态，监控会按间隔自动重试；"
+                "可先在浏览器中打开抖音完成验证，稍后恢复"
+            )
+        else:
+            item.setText(text)
+            item.setToolTip("")
 
     def set_monitoring(self, room_id: int, monitoring: bool) -> None:
         row = self._room_rows.get(room_id)

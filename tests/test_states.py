@@ -123,7 +123,12 @@ def test_parse_success_at_separate_from_confirmed_at():
 
 # 额外：API_MALFORMED / ROOM_NOT_EXIST / UNKNOWN_ERROR 不覆盖确认状态
 def test_errors_do_not_override_confirmed():
-    for err in (ParseResult.API_MALFORMED, ParseResult.ROOM_NOT_EXIST, ParseResult.UNKNOWN_ERROR):
+    for err in (
+        ParseResult.API_MALFORMED,
+        ParseResult.ROOM_NOT_EXIST,
+        ParseResult.UNKNOWN_ERROR,
+        ParseResult.RISK_CONTROL,
+    ):
         s = _state()
         s.update(ParseResult.SUCCESS, 2)
         s.update(err, None)

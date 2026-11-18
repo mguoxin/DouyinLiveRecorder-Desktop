@@ -167,6 +167,30 @@ def test_real_parser_http_error_status():
     assert _parser(client).fetch_and_parse("1") == (ParseResult.HTTP_ERROR, None)
 
 
+def test_real_parser_risk_control_page():
+    """抖音风控验证码中间页应识别为 RISK_CONTROL，而不是笼统的 API_MALFORMED。"""
+    captcha_html = (
+        b'<html><head><meta charset="utf-8"><title>\xe9\xaa\x8c\xe8\xaf\x81'
+        b'\xe7\xa0\x81\xe4\xb8\xad\xe9\x97\xb4\xe9\xa1\xb5</title>'
+        b'<script src="https://lf-cdn-tos.bytescm.com/obj/static/sec_sdk_build/'
+        b'3.5.2/captcha/index.js"></script></head><body></body></html>'
+    )
+    client = _FakeHttpClient(HttpResponse(200, captcha_html))
+
+    detail = _parser(client).fetch_and_parse_detail("1")
+
+    assert detail.result == ParseResult.RISK_CONTROL
+    assert detail.status is None
+    assert detail.stream_url is None
+
+
+def test_real_parser_plain_page_without_room_is_malformed():
+    """普通页面（无房间数据、无验证特征）仍是 API_MALFORMED。"""
+    client = _FakeHttpClient(HttpResponse(200, b"<html><body>nothing</body></html>"))
+
+    assert _parser(client).fetch_and_parse("1") == (ParseResult.API_MALFORMED, None)
+
+
 def test_real_parser_transport_error_response():
     client = _FakeHttpClient(
         HttpResponse(

@@ -18,6 +18,8 @@ class ParseResult(str, enum.Enum):
     HTTP_ERROR = "HTTP_ERROR"
     ROOM_NOT_EXIST = "ROOM_NOT_EXIST"
     UNKNOWN_ERROR = "UNKNOWN_ERROR"
+    # 抖音风控：返回验证码/安全校验中间页，无法取得房间数据。
+    RISK_CONTROL = "RISK_CONTROL"
 
     def __str__(self) -> str:  # 便于 JSON/日志输出
         return self.value
