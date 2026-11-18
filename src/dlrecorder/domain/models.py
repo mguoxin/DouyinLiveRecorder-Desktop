@@ -17,6 +17,11 @@ _LIVE_URL_RE = re.compile(
     r"/(?P<rid>[A-Za-z0-9_.-]{1,64})",
     re.IGNORECASE,
 )
+# 直播首页形式的链接把房间号放在查询参数里：
+# live.douyin.com/?...&live_web_rid=<rid>&...（仅抖音域名下生效）。
+_LIVE_RID_PARAM_RE = re.compile(
+    r"[?&]live_web_rid=(?P<rid>[A-Za-z0-9_.-]{1,64})", re.IGNORECASE
+)
 # 手机端分享的短链接（v.douyin.com/xxxx）需要联网跳转才能得到 web_rid。
 _SHORT_LINK_RE = re.compile(
     r"(?:https?://)?(?:v\.douyin\.com|v\.iesdouyin\.com)/\S+", re.IGNORECASE
@@ -28,6 +33,9 @@ def _extract_web_rid(text: str) -> str:
     match = _LIVE_URL_RE.search(text)
     if match:
         return match.group("rid")
+    param = _LIVE_RID_PARAM_RE.search(text)
+    if param and "douyin.com" in text.lower():
+        return param.group("rid")
     if _SHORT_LINK_RE.search(text):
         raise ValueError(
             "暂不支持抖音短链接（v.douyin.com），请在浏览器中打开该链接后，"

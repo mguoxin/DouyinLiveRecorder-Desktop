@@ -280,6 +280,22 @@ def test_validate_web_rid_accepts_live_urls():
         )
         == "123456789"
     )
+    # 直播首页形式：房间号在 live_web_rid 查询参数里。
+    assert (
+        validate_web_rid(
+            "https://live.douyin.com/?activity_name=&anchor_id=1483686520573257"
+            "&banner_index=undefined&banner_type=recommend&category_name=all"
+            "&live_web_rid=1477297997&page_type=live_main_page&user_id=92328793086"
+        )
+        == "1477297997"
+    )
+    # 路径形式优先于查询参数。
+    assert (
+        validate_web_rid("https://live.douyin.com/111?live_web_rid=222") == "111"
+    )
+    # 非抖音域名的 live_web_rid 参数不生效。
+    with pytest.raises(ValueError, match="无法从链接中识别直播间 ID"):
+        validate_web_rid("https://example.com/?live_web_rid=1477297997")
 
 
 def test_validate_web_rid_short_link_gives_actionable_hint():
