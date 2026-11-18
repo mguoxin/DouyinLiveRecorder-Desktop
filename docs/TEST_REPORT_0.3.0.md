@@ -170,6 +170,7 @@
 | 真机 i3 / 4GB | 未执行（无目标硬件） |
 | 资源限制模拟 | 开发机 14 核 18 线程；将 Python 进程（含子进程）亲和性限制为 2 个逻辑核后运行 20 房间基准：初始化 0.075 s、20 房间启动 2.03 s、空闲工作集 62.24 MB、峰值 63.38 MB、20/20 LIVE、关闭 0.013 s |
 | 判据 | `live_rooms == rooms`、峰值 ≤ 300 MB、关闭 ≤ 2 s 全部满足 |
+| 打包版 GUI 冒烟 | `tools\acceptance_low_spec.ps1 -Mode gui -GuiSeconds 60`：6 次采样，工作集 83.48 → 83.45 MB（增长 −0.03 MB），CPU 均值 0.01%、峰值 0.03%，线程 17→12，关闭请求成功、退出码 0，5 项判据全部通过（开发机 18 逻辑核，未做亲和性限制，属打包版启动/空闲资源检查，不是低配基准） |
 
 说明：模拟测试只反映 CPU 受限下的相对表现，不能替代 i3/4GB 真机验收；
 正式低配验收请在目标机器执行 `tools\acceptance_low_spec.ps1 -Mode all`。
@@ -226,3 +227,4 @@
 - 批次 H：`%TEMP%\dlr-h\soak\samples.jsonl`、`%TEMP%\dlr-h\isolate\`、`%TEMP%\dlr-h\net\`（`h_net.py` 输出）
 - 打包版端到端：`%TEMP%\dlr-h\pkg\`（隔离副本，`data\data\logs\app.log`、`app.db`、`runtime\ffmpeg_processes.json`、录制文件）；
   截图 `%TEMP%\dlr-h\shot-s3.png`（主窗口与设置对话框）
+- 打包版 GUI 冒烟：`%TEMP%\dlr-h\gui-smoke\acceptance-20261118_202300.json`
