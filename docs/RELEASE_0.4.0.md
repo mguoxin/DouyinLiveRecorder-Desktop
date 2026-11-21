@@ -32,6 +32,35 @@
   若在旧目录替换，请先备份 `data\`；本包不带 `data\`，首次启动自动创建。
 - 回滚：保留旧目录或解压 0.3.1 / 候选版压缩包即可回退，数据结构向后兼容。
 
+## 3.1 图标身份复核（2026-11-21 追加）
+
+用户反馈资源管理器中 `DouyinLiveRecorder.exe` 仍显示黄蓝色旧图标，因此对最终 EXE 的 PE 图标资源与 Shell 实际返回值做了独立核验。
+
+| 对象 | SHA-256 | PE 图标资源 | Shell 32px 取样色 | 结论 |
+| --- | --- | --- | --- | --- |
+| v0.4.0 发布 EXE | `D9DF7564…E8A5D` | 1 个组、10 个尺寸（16–256） | `#E11D48` | 品牌图标 |
+| v0.4.0 EXE（改名复制到全新目录） | 同上 | 同上 | `#E11D48` | 品牌图标，排除路径级缓存 |
+| 0.3.1 正式包 EXE | `C98A8F49…FAFE8` | 1 个组、7 个尺寸（8bpp/32bpp） | `#E9C63F`（黄） | PyInstaller 默认图标 |
+| Candidate 1 / 2 EXE | `137D96F7…26596` / `BE8C1CD6…B4D1` | 同上 | `#E9C63F`（黄） | PyInstaller 默认图标 |
+
+- v0.4.0 EXE 的每个尺寸与 `build/assets/app.ico` 逐字节一致（10/10 匹配，`build/verify_icon.py` 可复跑）。
+- 黄蓝色图标只出现在未配置 `icon=` 的旧包（0.3.1 与两个 GUI 候选版）上，属于旧包既有状态，本版未覆盖旧包。
+- 结论：v0.4.0 打包产物图标正确，黄蓝图标来自旧版本 EXE；本版**无需重新构建**，发布包与 EXE 哈希保持不变。
+
+复核命令：
+
+```
+.venv\Scripts\python.exe build\verify_icon.py
+```
+
+![资源管理器大图标（v0.4.0）](screenshots/release-0.4.0/10-explorer-040-large.png)
+
+![资源管理器小图标（v0.4.0，16px）](screenshots/release-0.4.0/11-explorer-040-small.png)
+
+![资源管理器大图标（v0.3.1，黄蓝默认图标对照）](screenshots/release-0.4.0/12-explorer-031-large.png)
+
+![EXE 属性详细信息（0.4.0.0）](screenshots/release-0.4.0/13-file-properties-040.png)
+
 ## 4. 验证记录
 
 - 完整自动化回归：`276 passed`，149.87 s（Windows / Python 3.12.16 / pytest 9.2.0）。
