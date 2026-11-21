@@ -1,0 +1,66 @@
+{
+  "platform": "windows",
+  "device_pixel_ratio": 1.0,
+  "data_dir": "C:\\Users\\kglpl\\AppData\\Local\\Temp\\dlr-final-data-15rrw5zn",
+  "stream_url": "http://127.0.0.1:10428/stream.ts",
+  "rooms": [
+    1,
+    2,
+    3,
+    4
+  ],
+  "recording_active": [
+    1
+  ],
+  "tray_available": true,
+  "tray_minimize": {
+    "visible_after_minimize": false,
+    "minimized_state": false,
+    "tray_icon_visible": true,
+    "recording_still_active": [
+      1
+    ],
+    "file_growth_wait_s": 1.0,
+    "recording_active_after_wait": [
+      1
+    ],
+    "file_size_before": 5767168,
+    "file_size_after": 6029312,
+    "file_grew": true
+  },
+  "tray_restore": {
+    "visible_after_restore": true,
+    "is_minimized": false
+  },
+  "tray_auto_record_sync": true,
+  "system_mode": {
+    "windows_light": true,
+    "effective_mode": "light",
+    "label": "跟随系统 · 浅色"
+  },
+  "theme_setting_persisted": "dark",
+  "close_cancelled": {
+    "button_clicked": true,
+    "window_still_visible": true,
+    "recording_still_active": [
+      1
+    ]
+  },
+  "close_accepted": {
+    "button_clicked": true,
+    "closing_flag": true,
+    "recording_active_after_close": []
+  },
+  "recordings_after_close": [
+    {
+      "status": "completed",
+      "file_size": 8112012,
+      "file_path": "C:\\Users\\kglpl\\AppData\\Local\\Temp\\dlr-final-data-15rrw5zn\\data\\recordings\\晚间游戏直播_123456789_20261121_164428_a0a0c3.ts"
+    },
+    {
+      "status": "interrupted",
+      "file_size": 104857600,
+      "file_path": "C:\\Users\\kglpl\\AppData\\Local\\Temp\\dlr-final-data-15rrw5zn\\data\\recordings\\晚间游戏直播-20261121-190000.ts"
+    }
+  ]
+}
