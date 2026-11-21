@@ -2,9 +2,10 @@
 
 基于 Python 3.12 + PySide6 Widgets + SQLite 的轻量级 Windows 桌面应用。
 
-当前版本：**0.3.1**。正式发布包：
-`release\DouyinLiveRecorder-0.3.1-win64.zip`，解压后直接运行 `DouyinLiveRecorder.exe`
-（onedir 便携版，内置 FFmpeg）。0.3.1 为链接解析修复版本（见
+当前版本：**0.4.0**。正式发布包：
+`release\DouyinLiveRecorder-0.4.0-win64.zip`，解压后直接运行 `DouyinLiveRecorder.exe`
+（onedir 便携版，内置 FFmpeg）。0.4.0 为 GUI 现代化与图标/版本资源收尾版本（见
+[docs/RELEASE_0.4.0.md](docs/RELEASE_0.4.0.md)），0.3.1 为链接解析修复版本（见
 [docs/FIX_0.3.1_URL_PARSING.md](docs/FIX_0.3.1_URL_PARSING.md)），0.3.0 交付与测试说明见
 [DELIVERY_0.3.0.md](docs/DELIVERY_0.3.0.md)，0.2.0 见 [DELIVERY_0.2.0.md](docs/DELIVERY_0.2.0.md)，
 更早版本见 `docs/RELEASE_REPORT_0.1.*.md`。
@@ -188,6 +189,16 @@ PyInstaller 6.22.3 已安装到项目虚拟环境，构建命令：
 判定通过。窗口标题与启动日志都会显示版本号，便于核对运行的是哪一版。
 
 ## 版本变更记录
+
+### 0.4.0（2026-11-21，GUI 现代化正式版）
+
+- 新增：全新 GUI（侧边栏导航、直播间管理、录制历史、日志、设置）。
+- 新增：深色 / 浅色 / 跟随系统主题，并持久化。
+- 新增：系统托盘（默认最小化驻留、菜单与双击恢复、安全退出）；托盘不可用时安全降级。
+- 新增：正式应用图标。窗口、任务栏、Alt+Tab、系统托盘与 EXE 内嵌图标统一为同一套图形，
+  内嵌多尺寸 `.ico`（16–256 px）。
+- 新增：Windows 版本资源（FileVersion / ProductVersion = 0.4.0.0）。
+- 兼容：数据目录 `data\`、SQLite Schema、配置键与单实例互斥量均未变化，可直接沿用 0.3.x 数据。
 
 ### 0.3.1（2026-11-18，直播间链接解析修复）
 

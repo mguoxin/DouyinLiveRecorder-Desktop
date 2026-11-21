@@ -41,6 +41,8 @@ exe = EXE(
     upx=False,
     console=False,
     disable_windowed_traceback=False,
+    icon=str(project_root / "build" / "assets" / "app.ico"),
+    version=str(project_root / "build" / "version_info.txt"),
 )
 
 coll = COLLECT(
