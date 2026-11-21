@@ -22,8 +22,8 @@
 
 1. 当前仓库 **没有任何上游代码**：无 `vendor/`、无上游包、无源码片段。唯一运行时依赖是 `PySide6-Essentials`（[pyproject.toml](../pyproject.toml)），上游使用的 `requests` / `httpx[http2]` / `PyExecJS` / `pycryptodome` / `loguru` 一个都没有引入。
 2. **没有上游远程与同步痕迹**：`git remote -v` 为空；`git log` 仅 4 个提交，全部为 2026-11-18；`docs/` 与 `THIRD_PARTY_NOTICES.txt` 中检索 `ihmily` / `上游` 均无命中。
-3. **核心数据源不同**：上游通过 `live.douyin.com/webcast/room/web/enter/` 接口 + `a_bogus` 签名（[spider.py:68-141](file:///C:/Users/kglpl/AppData/Local/Temp/dlr-upstream/DouyinLiveRecorder-main/src/spider.py#L68-L141)、`src/ab_sign.py`），本地通过公开直播页 React Flight 内嵌数据（[parser.py:90-133](file:///c:/Users/kglpl/Desktop/DouyinLiveRecorder-Desktop/src/dlrecorder/douyin/parser.py#L90-L133)），**不是同一套抓取逻辑**。
-4. **录制命令不同量级**：上游 FFmpeg 命令含 `-rw_timeout`、`-user_agent`、`-reconnect_streamed`、`-reconnect_at_eof`、`-reconnect_delay_max 60`、分段与转码（[main.py:1175-1204](file:///C:/Users/kglpl/AppData/Local/Temp/dlr-upstream/DouyinLiveRecorder-main/main.py#L1175-L1204)）；本地只有 8 个参数、`-c copy` 直封装 TS（[ffmpeg.py:104-127](file:///c:/Users/kglpl/Desktop/DouyinLiveRecorder-Desktop/src/dlrecorder/infrastructure/ffmpeg.py#L104-L127)）。
+3. **核心数据源不同**：上游通过 `live.douyin.com/webcast/room/web/enter/` 接口 + `a_bogus` 签名（[spider.py:68-141](file:///<TEMP>/dlr-upstream/DouyinLiveRecorder-main/src/spider.py#L68-L141)、`src/ab_sign.py`），本地通过公开直播页 React Flight 内嵌数据（[parser.py:90-133](../src/dlrecorder/douyin/parser.py#L90-L133)），**不是同一套抓取逻辑**。
+4. **录制命令不同量级**：上游 FFmpeg 命令含 `-rw_timeout`、`-user_agent`、`-reconnect_streamed`、`-reconnect_at_eof`、`-reconnect_delay_max 60`、分段与转码（[main.py:1175-1204](file:///<TEMP>/dlr-upstream/DouyinLiveRecorder-main/main.py#L1175-L1204)）；本地只有 8 个参数、`-c copy` 直封装 TS（[ffmpeg.py:104-127](../src/dlrecorder/infrastructure/ffmpeg.py#L104-L127)）。
 5. **这是有意决策，不是失控漂移**：2026-11-14 第二阶段技术审查后形成的工程约束明确写着“优先自研核心平台解析逻辑，如需复用第三方库需添加适配层隔离”，并限定“不得擅自扩展为多平台直播工具”。
 
 ### 0.1 评价口径（2026-11-18 项目原则）
@@ -49,8 +49,8 @@
 
 上游是**配置驱动的命令行/容器值守工具**，不是桌面应用。`index.html` 只是 FLV/M3U8 播放预览页；分发形态是 ZIP + `config/` 目录 + `DouyinLiveRecorder.exe`。无 GUI、无数据库。
 
-- 入口：[main.py](file:///C:/Users/kglpl/AppData/Local/Temp/dlr-upstream/DouyinLiveRecorder-main/main.py)（2,155 行）
-- 配置：[config/config.ini](file:///C:/Users/kglpl/AppData/Local/Temp/dlr-upstream/DouyinLiveRecorder-main/config/config.ini)（5,329 字节，约 60 项）、`config/URL_config.ini`（一行一个直播间）
+- 入口：[main.py](file:///<TEMP>/dlr-upstream/DouyinLiveRecorder-main/main.py)（2,155 行）
+- 配置：[config/config.ini](file:///<TEMP>/dlr-upstream/DouyinLiveRecorder-main/config/config.ini)（5,329 字节，约 60 项）、`config/URL_config.ini`（一行一个直播间）
 - 运行方式：`python main.py` / `uv run main.py` / Docker
 
 > 说明：下文上游代码位置的超链接指向本次审查的临时快照目录（`%TEMP%\dlr-upstream`），该目录可能被后续清理；长期引用请以 commit `add187f8` 为准，行号在同一提交内有效。
@@ -71,10 +71,10 @@
 
 ### 1.3 抖音链路的实际行为
 
-1. **获取房间数据**：优先 `web/enter` 接口（带 `a_bogus`）→ 失败回退到 `reflow/info`（app 参数）→ 再失败回退解析 `live.douyin.com` 页面 HTML（[spider.py:230-282](file:///C:/Users/kglpl/AppData/Local/Temp/dlr-upstream/DouyinLiveRecorder-main/src/spider.py#L230-L282)）。**三层回退**。
+1. **获取房间数据**：优先 `web/enter` 接口（带 `a_bogus`）→ 失败回退到 `reflow/info`（app 参数）→ 再失败回退解析 `live.douyin.com` 页面 HTML（[spider.py:230-282](file:///<TEMP>/dlr-upstream/DouyinLiveRecorder-main/src/spider.py#L230-L282)）。**三层回退**。
 2. **状态判定**：`status == 2` 视为直播中；`4` 视为未开播；直播中若无 `stream_url` 明确抛错（VR/特殊玩法不支持 PC 端）。
-3. **流地址选择**：`get_douyin_stream_url()` 按清晰度取 FLV/HLS，**先探测地址可用性，不可用自动换一档**（[stream.py:41-78](file:///C:/Users/kglpl/AppData/Local/Temp/dlr-upstream/DouyinLiveRecorder-main/src/stream.py#L41-L78)）。
-4. **录制**：每个直播间一个线程 + 全局 `semaphore`（默认 3 并发）；`ffmpeg` 带重连参数；退出码 0 后按配置转 MP4 / 分段 / 生成字幕 / 执行脚本；`q` 写入 stdin 优雅收尾（[main.py:436-449](file:///C:/Users/kglpl/AppData/Local/Temp/dlr-upstream/DouyinLiveRecorder-main/main.py#L436-L449)）。
+3. **流地址选择**：`get_douyin_stream_url()` 按清晰度取 FLV/HLS，**先探测地址可用性，不可用自动换一档**（[stream.py:41-78](file:///<TEMP>/dlr-upstream/DouyinLiveRecorder-main/src/stream.py#L41-L78)）。
+4. **录制**：每个直播间一个线程 + 全局 `semaphore`（默认 3 并发）；`ffmpeg` 带重连参数；退出码 0 后按配置转 MP4 / 分段 / 生成字幕 / 执行脚本；`q` 写入 stdin 优雅收尾（[main.py:436-449](file:///<TEMP>/dlr-upstream/DouyinLiveRecorder-main/main.py#L436-L449)）。
 
 ---
 
@@ -87,29 +87,29 @@
 
 | 能力 | 上游实现（commit `add187f8`） | 当前 0.1.1 实现 | 关系 |
 | --- | --- | --- | --- |
-| 链接识别（长链/短链/主页） | `room.py:52 get_sec_user_id`、`:78 get_unique_id`、`:109 get_live_room_id` | [models.py:26 `_extract_web_rid`](file:///c:/Users/kglpl/Desktop/DouyinLiveRecorder-Desktop/src/dlrecorder/domain/models.py#L26-L53)、`validate_web_rid` | 独立重写（仅长链；短链只提示） |
-| 房间信息与开播状态 | `spider.py:68/145/230` 三路回退 + `ab_sign` | [parser.py:153 `RealDouyinParser`](file:///c:/Users/kglpl/Desktop/DouyinLiveRecorder-Desktop/src/dlrecorder/douyin/parser.py#L153-L237) + [parser.py:90 `_extract_page_room`](file:///c:/Users/kglpl/Desktop/DouyinLiveRecorder-Desktop/src/dlrecorder/douyin/parser.py#L90-L133) | 独立重写（单一数据源） |
-| 状态语义（2=LIVE / 4=OFFLINE） | `spider.py:110`、`stream.py:51` 等硬编码 | [states.py:30 `KNOWN_STATUS_MAP`](file:///c:/Users/kglpl/Desktop/DouyinLiveRecorder-Desktop/src/dlrecorder/domain/states.py#L30-L33) | 语义一致，代码独立 |
-| 流地址解析与清晰度 | `stream.py:41 get_douyin_stream_url`（含可用性探测） | [parser.py:64 `_extract_room_stream_url`](file:///c:/Users/kglpl/Desktop/DouyinLiveRecorder-Desktop/src/dlrecorder/douyin/parser.py#L64-L82) | 独立重写（无清晰度、无探测） |
+| 链接识别（长链/短链/主页） | `room.py:52 get_sec_user_id`、`:78 get_unique_id`、`:109 get_live_room_id` | [models.py:26 `_extract_web_rid`](../src/dlrecorder/domain/models.py#L26-L53)、`validate_web_rid` | 独立重写（仅长链；短链只提示） |
+| 房间信息与开播状态 | `spider.py:68/145/230` 三路回退 + `ab_sign` | [parser.py:153 `RealDouyinParser`](../src/dlrecorder/douyin/parser.py#L153-L237) + [parser.py:90 `_extract_page_room`](../src/dlrecorder/douyin/parser.py#L90-L133) | 独立重写（单一数据源） |
+| 状态语义（2=LIVE / 4=OFFLINE） | `spider.py:110`、`stream.py:51` 等硬编码 | [states.py:30 `KNOWN_STATUS_MAP`](../src/dlrecorder/domain/states.py#L30-L33) | 语义一致，代码独立 |
+| 流地址解析与清晰度 | `stream.py:41 get_douyin_stream_url`（含可用性探测） | [parser.py:64 `_extract_room_stream_url`](../src/dlrecorder/douyin/parser.py#L64-L82) | 独立重写（无清晰度、无探测） |
 | 签名/风控 | `src/ab_sign.py`、`src/javascript/x-bogus.js`、PyExecJS | 无 | 未采用 |
-| 监控任务调度 | `main.py:545 start_record` + 线程 + semaphore | [task_manager.py:79 `MonitorWorker`](file:///c:/Users/kglpl/Desktop/DouyinLiveRecorder-Desktop/src/dlrecorder/core/task_manager.py#L79-L140)、`:216 _monitor_loop` | 独立重写（asyncio + 单事件循环） |
-| 录制进程管理 | `main.py:420 check_subprocess` | [recording_service.py:75 `RecordingService`](file:///c:/Users/kglpl/Desktop/DouyinLiveRecorder-Desktop/src/dlrecorder/application/recording_service.py#L75-L137)、[ffmpeg.py:130 `FFmpegProcess`](file:///c:/Users/kglpl/Desktop/DouyinLiveRecorder-Desktop/src/dlrecorder/infrastructure/ffmpeg.py#L130-L262) | 独立重写（管理线程 + 命令队列） |
-| FFmpeg 命令 | `main.py:1175-1204`（含 UA/headers/proxy/reconnect） | [ffmpeg.py:104 `build_record_command`](file:///c:/Users/kglpl/Desktop/DouyinLiveRecorder-Desktop/src/dlrecorder/infrastructure/ffmpeg.py#L104-L127) | 独立重写（精简，缺重连） |
-| 优雅停止 | `main.py:441-447` 写 `q` | [ffmpeg.py:185 `stop`](file:///c:/Users/kglpl/Desktop/DouyinLiveRecorder-Desktop/src/dlrecorder/infrastructure/ffmpeg.py#L185-L262)（q → terminate → kill） | 思路同源，代码独立 |
-| 文件命名/目录规则 | `main.py:494 clean_name` + 配置项 | [recording_service.py:516 `_allocate_output_path`](file:///c:/Users/kglpl/Desktop/DouyinLiveRecorder-Desktop/src/dlrecorder/application/recording_service.py#L516-L524) | 独立重写（`名称_ID_时间_随机.ts`） |
+| 监控任务调度 | `main.py:545 start_record` + 线程 + semaphore | [task_manager.py:79 `MonitorWorker`](../src/dlrecorder/core/task_manager.py#L79-L140)、`:216 _monitor_loop` | 独立重写（asyncio + 单事件循环） |
+| 录制进程管理 | `main.py:420 check_subprocess` | [recording_service.py:75 `RecordingService`](../src/dlrecorder/application/recording_service.py#L75-L137)、[ffmpeg.py:130 `FFmpegProcess`](../src/dlrecorder/infrastructure/ffmpeg.py#L130-L262) | 独立重写（管理线程 + 命令队列） |
+| FFmpeg 命令 | `main.py:1175-1204`（含 UA/headers/proxy/reconnect） | [ffmpeg.py:104 `build_record_command`](../src/dlrecorder/infrastructure/ffmpeg.py#L104-L127) | 独立重写（精简，缺重连） |
+| 优雅停止 | `main.py:441-447` 写 `q` | [ffmpeg.py:185 `stop`](../src/dlrecorder/infrastructure/ffmpeg.py#L185-L262)（q → terminate → kill） | 思路同源，代码独立 |
+| 文件命名/目录规则 | `main.py:494 clean_name` + 配置项 | [recording_service.py:516 `_allocate_output_path`](../src/dlrecorder/application/recording_service.py#L516-L524) | 独立重写（`名称_ID_时间_随机.ts`） |
 | 分段录制 | `main.py:1254-1544`、`segment_video()` | 无 | 未采用 |
 | 转 MP4 / H.264 / 字幕 / 自定义脚本 | `main.py:219/254/273/356` | 无 | 未采用 |
-| 失败重试/循环 | `main.py:555/577/664`、`error_count` | [task_manager.py:231 `while not stop_evt.is_set()`](file:///c:/Users/kglpl/Desktop/DouyinLiveRecorder-Desktop/src/dlrecorder/core/task_manager.py#L216-L290) | 部分对应（按间隔重查，非录制级重试） |
+| 失败重试/循环 | `main.py:555/577/664`、`error_count` | [task_manager.py:231 `while not stop_evt.is_set()`](../src/dlrecorder/core/task_manager.py#L216-L290) | 部分对应（按间隔重查，非录制级重试） |
 | 断线重连 | FFmpeg `-reconnect_streamed/-reconnect_at_eof` | 无 | 未采用 |
-| 配置管理 | `config/config.ini` + `URL_config.ini` | SQLite `settings` 表 + [settings_service.py:94](file:///c:/Users/kglpl/Desktop/DouyinLiveRecorder-Desktop/src/dlrecorder/application/settings_service.py#L94-L166) | 独立重写 |
-| 持久化与历史 | 无数据库 | [db.py:44 `Database`](file:///c:/Users/kglpl/Desktop/DouyinLiveRecorder-Desktop/src/dlrecorder/infrastructure/db.py#L44-L58)（Schema V2、WAL、迁移校验） | 本地新增 |
+| 配置管理 | `config/config.ini` + `URL_config.ini` | SQLite `settings` 表 + [settings_service.py:94](../src/dlrecorder/application/settings_service.py#L94-L166) | 独立重写 |
+| 持久化与历史 | 无数据库 | [db.py:44 `Database`](../src/dlrecorder/infrastructure/db.py#L44-L58)（Schema V2、WAL、迁移校验） | 本地新增 |
 | 桌面 GUI | 无 | `presentation/main_window.py`、`widgets.py` | 本地新增 |
-| 单实例 | `StopRecording.vbs`（停止脚本，非单实例） | [single_instance.py:52](file:///c:/Users/kglpl/Desktop/DouyinLiveRecorder-Desktop/src/dlrecorder/infrastructure/single_instance.py#L52-L107) 命名互斥量 | 本地新增 |
-| 备份/恢复 | `main.py:1648 backup_file`（备份配置文件） | [backup.py:87/107](file:///c:/Users/kglpl/Desktop/DouyinLiveRecorder-Desktop/src/dlrecorder/infrastructure/backup.py#L87-L135)（SQLite Backup API） | 独立实现，目标不同 |
+| 单实例 | `StopRecording.vbs`（停止脚本，非单实例） | [single_instance.py:52](../src/dlrecorder/infrastructure/single_instance.py#L52-L107) 命名互斥量 | 本地新增 |
+| 备份/恢复 | `main.py:1648 backup_file`（备份配置文件） | [backup.py:87/107](../src/dlrecorder/infrastructure/backup.py#L87-L135)（SQLite Backup API） | 独立实现，目标不同 |
 | 推送通知 | `msg_push.py`（7 种渠道） | 无 | 未采用 |
 | 代理 | `src/proxy.py` + 按平台代理列表 | 无 | 未采用 |
 | 平台覆盖 | 50+（README 清单） | 仅抖音 | 未采用（有意的范围收缩） |
-| 依赖安装 | `ffmpeg_install.py`、`initializer.py`（安装 Node） | 内置 `tools/ffmpeg`，[ffmpeg.py:50 `find_local_ffmpeg`](file:///c:/Users/kglpl/Desktop/DouyinLiveRecorder-Desktop/src/dlrecorder/infrastructure/ffmpeg.py#L50-L66) | 独立实现 |
+| 依赖安装 | `ffmpeg_install.py`、`initializer.py`（安装 Node） | 内置 `tools/ffmpeg`，[ffmpeg.py:50 `find_local_ffmpeg`](../src/dlrecorder/infrastructure/ffmpeg.py#L50-L66) | 独立实现 |
 
 ### 2.1 继承量化
 
@@ -131,17 +131,17 @@
 ### 3.1 直播间信息获取
 
 - 上游：接口优先（`web/enter` + `a_bogus`）→ app 回退 → 页面回退；**抗改版能力强，但依赖 JS 签名与 Node**。
-- 本地：只读公开页 `https://www.douyin.com/root/live/<rid>`，从 `self.__pace_f.push([1,"..."])` 记录中还原 React Flight 文本，再用 `json.JSONDecoder().raw_decode` 逐条解析（[parser.py:85-133](file:///c:/Users/kglpl/Desktop/DouyinLiveRecorder-Desktop/src/dlrecorder/douyin/parser.py#L85-L133)）。
+- 本地：只读公开页 `https://www.douyin.com/root/live/<rid>`，从 `self.__pace_f.push([1,"..."])` 记录中还原 React Flight 文本，再用 `json.JSONDecoder().raw_decode` 逐条解析（[parser.py:85-133](../src/dlrecorder/douyin/parser.py#L85-L133)）。
 - 评价：本地方案**没有签名依赖、无需 Node、无凭据**，隐私与部署复杂度更优；但**只有一条数据通路**，抗改版/抗风控能力明显弱于上游。
 
 ### 3.2 直播状态监控
 
-- 本地每个房间一个 asyncio 任务，`interval` 秒轮询；请求经 `HttpExecutor` 统一排队（容量 8），队列满只提示一次并继续重试（[task_manager.py:228-268](file:///c:/Users/kglpl/Desktop/DouyinLiveRecorder-Desktop/src/dlrecorder/core/task_manager.py#L228-L268)）。
-- 状态机严格区分“已确认状态”与“本次观测”，解析失败**不覆盖**上次确认状态（[states.py:39-72](file:///c:/Users/kglpl/Desktop/DouyinLiveRecorder-Desktop/src/dlrecorder/domain/states.py#L39-L72)）。这一点优于上游的“本轮取不到就等待”。
+- 本地每个房间一个 asyncio 任务，`interval` 秒轮询；请求经 `HttpExecutor` 统一排队（容量 8），队列满只提示一次并继续重试（[task_manager.py:228-268](../src/dlrecorder/core/task_manager.py#L228-L268)）。
+- 状态机严格区分“已确认状态”与“本次观测”，解析失败**不覆盖**上次确认状态（[states.py:39-72](../src/dlrecorder/domain/states.py#L39-L72)）。这一点优于上游的“本轮取不到就等待”。
 
 ### 3.3 直播流解析
 
-- 本地从房间对象中按 `FULL_HD1/HD1/SD1/SD2` 取第一条非空 FLV/HLS（[parser.py:50-61](file:///c:/Users/kglpl/Desktop/DouyinLiveRecorder-Desktop/src/dlrecorder/douyin/parser.py#L50-L61)），**不校验地址是否可播放**。
+- 本地从房间对象中按 `FULL_HD1/HD1/SD1/SD2` 取第一条非空 FLV/HLS（[parser.py:50-61](../src/dlrecorder/douyin/parser.py#L50-L61)），**不校验地址是否可播放**。
 - 上游会探测可用性并降档重试（`stream.py:65-69`）。这是**可感知的行为差异**：本地可能拿到已失效的高码率地址，表现为“开始录制即失败”或“立刻停止”。
 
 ### 3.4 录制任务管理
@@ -158,13 +158,13 @@
 
 ### 3.6 网络异常与断线恢复
 
-- 本地：传输错误细分为超时/DNS/TLS/连接/协议（[http_client.py:26-101](file:///c:/Users/kglpl/Desktop/DouyinLiveRecorder-Desktop/src/dlrecorder/infrastructure/http_client.py#L26-L101)），解析失败映射 `NETWORK_ERROR` 且不改变确认状态；录制中断只会标记 `failed`/`interrupted`。
+- 本地：传输错误细分为超时/DNS/TLS/连接/协议（[http_client.py:26-101](../src/dlrecorder/infrastructure/http_client.py#L26-L101)），解析失败映射 `NETWORK_ERROR` 且不改变确认状态；录制中断只会标记 `failed`/`interrupted`。
 - 上游：FFmpeg 层 `-reconnect_streamed -reconnect_at_eof -reconnect_delay_max 60`，外加外层循环重新探测。
 - **这是本次审查发现的最高优先级能力缺口**（详见 4.1 F1）。
 
 ### 3.7 平台接口兼容性
 
-- 本地只针对抖音公开页一种结构，无签名、无 Cookie、无代理、无第二数据源；页面结构变化时统一落入 `API_MALFORMED`（[parser.py:230-232](file:///c:/Users/kglpl/Desktop/DouyinLiveRecorder-Desktop/src/dlrecorder/douyin/parser.py#L230-L232)）。
+- 本地只针对抖音公开页一种结构，无签名、无 Cookie、无代理、无第二数据源；页面结构变化时统一落入 `API_MALFORMED`（[parser.py:230-232](../src/dlrecorder/douyin/parser.py#L230-L232)）。
 - 行为上是安全的（不会误开录制），但**可用性是单点的**。
 
 ---

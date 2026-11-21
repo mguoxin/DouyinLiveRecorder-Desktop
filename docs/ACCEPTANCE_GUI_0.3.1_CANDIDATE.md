@@ -72,7 +72,7 @@
 
 ### 5.1 模拟流证据（不计入真实验收）
 
-既有 GUI 候选版模拟流验收（本地 HTTP MPEG-TS + MockParser + 真实 FFmpeg）结果保存在 [evidence.json](computer://c:\Users\kglpl\Desktop\DouyinLiveRecorder-Desktop\docs\screenshots\gui-candidate-20261121\evidence.json)：最小化后文件 5,767,168 → 6,029,312 字节、托盘恢复、取消/确认退出均通过。该结果**仅证明 GUI 与录制服务接线**，不作为真实抖音录制证据。
+既有 GUI 候选版模拟流验收（本地 HTTP MPEG-TS + MockParser + 真实 FFmpeg）结果保存在 [evidence.json](screenshots/gui-candidate-20261121/evidence.json)：最小化后文件 5,767,168 → 6,029,312 字节、托盘恢复、取消/确认退出均通过。该结果**仅证明 GUI 与录制服务接线**，不作为真实抖音录制证据。
 
 ## 6. 额外复核（基于变更文件的静态审查 + 只读检查）
 
@@ -80,8 +80,8 @@
 
 - `git diff 7d19dd3 ee3a445` 显示数据库、迁移、Schema、核心录制代码零改动；依赖文件零改动。
 - 主题偏好仅使用既有 `settings(key, value)` 表写入 `appearance.theme`，无新表、无新列：
-  - 读取/保存见 [theme.py](file:///c:/Users/kglpl/Desktop/DouyinLiveRecorder-Desktop/src/dlrecorder/presentation/theme.py#L624-L639)
-  - 通用键值接口见 [db.py](file:///c:/Users/kglpl/Desktop/DouyinLiveRecorder-Desktop/src/dlrecorder/infrastructure/db.py#L744-L757)
+  - 读取/保存见 [theme.py](../src/dlrecorder/presentation/theme.py#L624-L639)
+  - 通用键值接口见 [db.py](../src/dlrecorder/infrastructure/db.py#L744-L757)
 - 只读对比候选版新建库与 0.3.1 基线库：
 
 | 数据库 | Schema 版本 | 表数量 |
@@ -98,27 +98,27 @@
 
 重复调用均有幂等保护，未发现重复收尾或重复写库：
 
-- 主窗口 `closeEvent` 以 `_closing` 提前返回：[main_window.py](file:///c:/Users/kglpl/Desktop/DouyinLiveRecorder-Desktop/src/dlrecorder/presentation/main_window.py#L745-L780)
-- `dispose()` 可重复调用：[main_window.py](file:///c:/Users/kglpl/Desktop/DouyinLiveRecorder-Desktop/src/dlrecorder/presentation/main_window.py#L721-L726)
-- 录制服务缓存关闭报告：[recording_service.py](file:///c:/Users/kglpl/Desktop/DouyinLiveRecorder-Desktop/src/dlrecorder/application/recording_service.py#L315-L337)
-- 应用级 `_shutdown_done` 守卫：[app.py](file:///c:/Users/kglpl/Desktop/DouyinLiveRecorder-Desktop/src/dlrecorder/application/app.py#L274-L296)
-- 数据库 `close()` 空值守卫：[db.py](file:///c:/Users/kglpl/Desktop/DouyinLiveRecorder-Desktop/src/dlrecorder/infrastructure/db.py#L71-L75)
-- 日志桥接 `close()` 只解绑一次：[widgets.py](file:///c:/Users/kglpl/Desktop/DouyinLiveRecorder-Desktop/src/dlrecorder/presentation/widgets.py#L516-L520)
-- 托盘 `dispose()` 置空并删除：[tray.py](file:///c:/Users/kglpl/Desktop/DouyinLiveRecorder-Desktop/src/dlrecorder/presentation/tray.py#L85-L93)
+- 主窗口 `closeEvent` 以 `_closing` 提前返回：[main_window.py](../src/dlrecorder/presentation/main_window.py#L745-L780)
+- `dispose()` 可重复调用：[main_window.py](../src/dlrecorder/presentation/main_window.py#L721-L726)
+- 录制服务缓存关闭报告：[recording_service.py](../src/dlrecorder/application/recording_service.py#L315-L337)
+- 应用级 `_shutdown_done` 守卫：[app.py](../src/dlrecorder/application/app.py#L274-L296)
+- 数据库 `close()` 空值守卫：[db.py](../src/dlrecorder/infrastructure/db.py#L71-L75)
+- 日志桥接 `close()` 只解绑一次：[widgets.py](../src/dlrecorder/presentation/widgets.py#L516-L520)
+- 托盘 `dispose()` 置空并删除：[tray.py](../src/dlrecorder/presentation/tray.py#L85-L93)
 
 ### 6.3 最小化/恢复是否可能导致重复录制
 
-- 最小化路径仅在 `isMinimized()` 且非退出中时 `hide()`，不调用监控或录制启动接口：[main_window.py](file:///c:/Users/kglpl/Desktop/DouyinLiveRecorder-Desktop/src/dlrecorder/presentation/main_window.py#L239-L249)
-- 恢复路径仅 `showNormal/activateWindow/raise_`：[main_window.py](file:///c:/Users/kglpl/Desktop/DouyinLiveRecorder-Desktop/src/dlrecorder/presentation/main_window.py#L251-L255)
-- `changeEvent` 只投递隐藏动作，不触发录制：[main_window.py](file:///c:/Users/kglpl/Desktop/DouyinLiveRecorder-Desktop/src/dlrecorder/presentation/main_window.py#L735-L743)
+- 最小化路径仅在 `isMinimized()` 且非退出中时 `hide()`，不调用监控或录制启动接口：[main_window.py](../src/dlrecorder/presentation/main_window.py#L239-L249)
+- 恢复路径仅 `showNormal/activateWindow/raise_`：[main_window.py](../src/dlrecorder/presentation/main_window.py#L251-L255)
+- `changeEvent` 只投递隐藏动作，不触发录制：[main_window.py](../src/dlrecorder/presentation/main_window.py#L735-L743)
 - 录制本身由 `RecordingService` 按房间 ID 管理，UI 显示/隐藏不参与其状态机。
 
 结论：代码层面不存在最小化/恢复导致重复录制的路径；真实录制下仍建议按验收步骤实测确认。
 
 ### 6.4 托盘不可用回退
 
-- `QSystemTrayIcon.isSystemTrayAvailable()` 为假时不创建托盘，记录告警并保持普通窗口行为：[tray.py](file:///c:/Users/kglpl/Desktop/DouyinLiveRecorder-Desktop/src/dlrecorder/presentation/tray.py#L27-L33)
-- `_setup_tray` 在无托盘时置 `_tray=None`、恢复 `quitOnLastWindowClosed(True)`、侧边栏提示“系统托盘不可用”，关闭按钮走正常退出：[main_window.py](file:///c:/Users/kglpl/Desktop/DouyinLiveRecorder-Desktop/src/dlrecorder/presentation/main_window.py#L218-L237)
+- `QSystemTrayIcon.isSystemTrayAvailable()` 为假时不创建托盘，记录告警并保持普通窗口行为：[tray.py](../src/dlrecorder/presentation/tray.py#L27-L33)
+- `_setup_tray` 在无托盘时置 `_tray=None`、恢复 `quitOnLastWindowClosed(True)`、侧边栏提示“系统托盘不可用”，关闭按钮走正常退出：[main_window.py](../src/dlrecorder/presentation/main_window.py#L218-L237)
 - 无托盘时 `changeEvent` 不满足 `_tray is not None`，不会隐藏窗口。
 
 结论：静态路径完整；本轮未在真实“无通知区域”环境做运行时模拟（剩余风险见第 8 节）。

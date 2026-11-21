@@ -44,7 +44,7 @@
 
 ## 4. 两个可解码文件为什么被标记 failed
 
-状态机路径（[recording_service.py](file:///c:/Users/kglpl/Desktop/DouyinLiveRecorder-Desktop/src/dlrecorder/application/recording_service.py#L580-L632)）：
+状态机路径（[recording_service.py](../src/dlrecorder/application/recording_service.py#L580-L632)）：
 
 ```
 FFmpeg 退出码 0 → _clean_exit_outcome() 重新解析直播状态
@@ -66,10 +66,10 @@ FFmpeg 退出码 0 → _clean_exit_outcome() 重新解析直播状态
 ## 5. ID 5 的 `completed/size=0` 与库内 `failed/8372580` 差异来源
 
 - 17:24:01 写库：`finish_recording(id=5, "failed", 8372580)` —— 日志「录制失败 … exit=0」与库内值一致。
-- 17:24:08 会话收尾调用 [`_end_without_segment(failed=False)`](file:///c:/Users/kglpl/Desktop/DouyinLiveRecorder-Desktop/src/dlrecorder/application/recording_service.py#L819-L841)，该函数：
+- 17:24:08 会话收尾调用 [`_end_without_segment(failed=False)`](../src/dlrecorder/application/recording_service.py#L819-L841)，该函数：
   - **不写数据库**（此时没有打开中的分段）；
   - 但发出的 `recording_finished` 事件里 `recording_id=None`、`status="completed"`、`file_size=0`，同时 `file_path` 仍指向上一个分段（id5）的文件。
-- GUI 侧 [`_on_recording_finished`](file:///c:/Users/kglpl/Desktop/DouyinLiveRecorder-Desktop/src/dlrecorder/presentation/main_window.py#L505-L526) 直接把该事件当作「某条录制结束」记录日志并更新状态栏，于是产生 `房间 1 录制结束 status=completed size=0 file=...af593a.ts`。
+- GUI 侧 [`_on_recording_finished`](../src/dlrecorder/presentation/main_window.py#L505-L526) 直接把该事件当作「某条录制结束」记录日志并更新状态栏，于是产生 `房间 1 录制结束 status=completed size=0 file=...af593a.ts`。
 
 同类现象在 id1 也出现过（17:16:53 `status=failed size=0`，库内为 `failed/511466220`），本质相同：**会话级事件使用了分段级字段**。
 

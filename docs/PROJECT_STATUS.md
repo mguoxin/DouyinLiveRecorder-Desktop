@@ -139,7 +139,7 @@
     同目录原 `app.log` 一并被删除（现存日志从 20:09:43 才重新开始），因此计数 7360 大于现存日志中可检索的 2950 条。
   - 监控与状态判定未受影响（20/20 全程 LIVE），内存与线程数无变化。
   - 该现象暴露真实缺陷：录制目录被外部删除时磁盘检查会刷屏。已修复
-    [disk.py](file:///c:/Users/kglpl/Desktop/DouyinLiveRecorder-Desktop/src/dlrecorder/infrastructure/disk.py)：
+    [disk.py](../src/dlrecorder/infrastructure/disk.py)：
     路径不存在时回退到最近的已存在上级目录读取卷剩余空间，同一路径只告警一次；
     新增 2 项回归测试，并复测“运行中删除录制目录”场景 70 秒，告警计数保持 0。
 - 真实 FFmpeg（离线）：本地媒体录制完成；限速 HTTP 流录制后手动停止，均为 `completed` 且文件非空。

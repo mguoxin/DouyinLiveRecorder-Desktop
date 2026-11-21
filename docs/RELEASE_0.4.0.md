@@ -3,7 +3,7 @@
 - 发布日期：2026-11-21
 - 技术基线：GUI Candidate 2（源码 `f168880` + 文档 `eb964e8`）
 - 发布包：`release/DouyinLiveRecorder-0.4.0-win64.zip`（onedir 便携版，内置 FFmpeg）
-- 性质：本地正式候选版本准备与封存；未上传 GitHub、未创建公开 Release
+- 性质：对外正式发布版本（GitHub Release `v0.4.0`）
 
 ## 1. 本版变更
 

@@ -29,7 +29,7 @@
 ### 1.3 修复内容
 
 - 提交：`f168880` `fix(gui): 托盘初始化异常时安全降级`（11 行新增、2 行删除）
-- 位置：[main_window.py](file:///c:/Users/kglpl/Desktop/DouyinLiveRecorder-Desktop/src/dlrecorder/presentation/main_window.py#L218-L238)
+- 位置：[main_window.py](../src/dlrecorder/presentation/main_window.py#L218-L238)
 - 行为：捕获托盘构造/初始化异常 → 记录堆栈 → 恢复 `quitOnLastWindowClosed(True)` → 侧边栏提示“系统托盘不可用” → 继续正常启动；不触碰录制服务。
 
 ### 1.4 修复后复测

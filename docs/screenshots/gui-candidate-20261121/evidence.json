@@ -1,7 +1,7 @@
 {
   "platform": "windows",
   "device_pixel_ratio": 1.0,
-  "data_dir": "C:\\Users\\kglpl\\AppData\\Local\\Temp\\dlr-final-data-15rrw5zn",
+  "data_dir": "<TEMP>\dlr-final-data-15rrw5zn",
   "stream_url": "http://127.0.0.1:10428/stream.ts",
   "rooms": [
     1,
@@ -55,12 +55,12 @@
     {
       "status": "completed",
       "file_size": 8112012,
-      "file_path": "C:\\Users\\kglpl\\AppData\\Local\\Temp\\dlr-final-data-15rrw5zn\\data\\recordings\\晚间游戏直播_123456789_20261121_164428_a0a0c3.ts"
+      "file_path": "<TEMP>\dlr-final-data-15rrw5zn\\data\\recordings\\晚间游戏直播_123456789_20261121_164428_a0a0c3.ts"
     },
     {
       "status": "interrupted",
       "file_size": 104857600,
-      "file_path": "C:\\Users\\kglpl\\AppData\\Local\\Temp\\dlr-final-data-15rrw5zn\\data\\recordings\\晚间游戏直播-20261121-190000.ts"
+      "file_path": "<TEMP>\dlr-final-data-15rrw5zn\\data\\recordings\\晚间游戏直播-20261121-190000.ts"
     }
   ]
 }

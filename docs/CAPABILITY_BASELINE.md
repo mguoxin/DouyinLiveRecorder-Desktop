@@ -37,7 +37,7 @@
 ### 2.2 连续录制（`rec_bench.py`）
 
 - 两侧各录制 **600 s**，串行执行，使用各自**实际生产命令**：
-  - 本项目：[ffmpeg.py:104 `build_record_command`](file:///c:/Users/kglpl/Desktop/DouyinLiveRecorder-Desktop/src/dlrecorder/infrastructure/ffmpeg.py#L104-L127) 的 8 参数命令（`-c copy -f mpegts`）。
+  - 本项目：[ffmpeg.py:104 `build_record_command`](../src/dlrecorder/infrastructure/ffmpeg.py#L104-L127) 的 8 参数命令（`-c copy -f mpegts`）。
   - 上游：`main.py` 中抖音 FLV+TS 分支的完整参数（`-rw_timeout`、`-reconnect_streamed`、`-reconnect_at_eof`、`-reconnect_delay_max 60`、`-max_muxing_queue_size` 等）。
 - 采样：每 1 s 记录输出文件大小；每 1 s 读取 FFmpeg 进程 CPU 时间（`GetProcessTimes`）与工作集（`GetProcessMemoryInfo`）。
 - 结束：向 stdin 写入 `q`，10 s 内退出记为优雅收尾。
@@ -66,7 +66,7 @@
 
 1. 在**当前页面结构下**两者都能稳定解析，成功率无差异。
 2. 本项目单次解析时延约为上游 **2.9 倍**（1478 ms vs 504 ms），P95 约为 **4 倍**。原因是每次轮询都会下载约 1.34 MB 的完整页面并做字符串拼接 + JSON 还原，而上游请求的是小体积 JSON。
-3. 按本项目默认监控间隔 120 s（[settings_service.py:25](file:///c:/Users/kglpl/Desktop/DouyinLiveRecorder-Desktop/src/dlrecorder/application/settings_service.py#L25)）计算，**单房间每日轮询流量约 0.96 GB**（720 次 × 1.34 MB），且延迟会直接体现在开播发现时延上。
+3. 按本项目默认监控间隔 120 s（[settings_service.py:25](../src/dlrecorder/application/settings_service.py#L25)）计算，**单房间每日轮询流量约 0.96 GB**（720 次 × 1.34 MB），且延迟会直接体现在开播发现时延上。
 4. 上游具备三层数据源回退与签名能力，本项目只有单一页面数据源；本次未遇到风控/改版，因此**"抗改版能力"未被验证**，只记录为结构性差异。
 
 ---
