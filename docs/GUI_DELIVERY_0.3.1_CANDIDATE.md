@@ -146,7 +146,7 @@
 
 - 浅色：`light-rooms.png`、`light-history.png`、`light-logs.png`、`light-settings-top.png`、`light-settings-bottom.png`
 - 深色：`dark-rooms.png`、`dark-history.png`、`dark-logs.png`、`dark-settings-top.png`、`dark-settings-bottom.png`
-- 原生标题栏（含窗口边框）：同名 `*-frame.png`
+- 原生标题栏（含窗口边框）：部分保留的 `*-frame.png`（5 张误捕获 IDE 窗口的已移除）
 - 空状态：`light-rooms-empty.png`、`dark-rooms-empty.png`、`light-history-empty.png`、`dark-history-empty.png`
 - 添加直播间：`light-add-room-dialog.png`、`dark-add-room-dialog.png` 及 `-frame` 版本
 - 最小窗口 900x600：`light-rooms-900x600.png`、`dark-rooms-900x600.png` 及 `-frame` 版本
@@ -155,6 +155,7 @@
 - 125% 缩放：`dpi125/`（浅/深主要页面与设置页）
 
 截图均为实际运行画面（`QWidget.grab()` 为客户区，`-frame` 为含系统标题栏的屏幕捕获）。
+最终验收使用的选图与脱敏版本见 `docs/FINAL_ACCEPTANCE_0.3.1_CANDIDATE.md`。
 
 ---
 
