@@ -216,9 +216,18 @@ class MainWindow(QMainWindow):
     # 托盘
     # ------------------------------------------------------------------
     def _setup_tray(self) -> None:
-        self._tray: Optional[TrayController] = TrayController(self)
+        self._tray: Optional[TrayController] = None
         app = QApplication.instance()
-        if self._tray is not None and self._tray.available:
+        try:
+            tray = TrayController(self)
+        except Exception:  # noqa: BLE001 - 托盘可选，初始化失败不得阻止启动
+            logger.exception("系统托盘初始化失败，降级为普通窗口运行")
+            if app is not None:
+                app.setQuitOnLastWindowClosed(True)
+            self.sidebar.set_tray_note("系统托盘不可用")
+            return
+        if tray.available:
+            self._tray = tray
             if app is not None:
                 app.setQuitOnLastWindowClosed(False)
             self._tray.show_requested.connect(self._restore_window)
