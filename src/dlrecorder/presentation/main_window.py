@@ -1,4 +1,4 @@
-"""主窗口。"""
+"""主窗口：侧边栏导航、页面容器、系统托盘与退出收尾。"""
 from __future__ import annotations
 
 import logging
@@ -6,21 +6,15 @@ from datetime import datetime
 from pathlib import Path
 from typing import Callable, Optional
 
-from PySide6.QtCore import Qt, QUrl, Signal
+from PySide6.QtCore import QEvent, QTimer, QUrl, Qt, Signal
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
-    QCheckBox,
-    QDialog,
-    QFileDialog,
+    QApplication,
     QHBoxLayout,
-    QInputDialog,
     QLabel,
     QMainWindow,
-    QMessageBox,
-    QPushButton,
-    QSplitter,
+    QStackedWidget,
     QStatusBar,
-    QToolBar,
     QVBoxLayout,
     QWidget,
 )
@@ -32,16 +26,27 @@ from ..application.settings_service import AppSettings, SettingsService
 from ..domain.models import validate_web_rid
 from ..infrastructure.backup import prepare_restore, verify_sqlite
 from ..infrastructure.db import Database
+from . import icons
+from .pages import HistoryPage, LogsPage, RoomsPage, SettingsPage, Sidebar
+from .theme import ThemeManager
+from .tray import TrayController
 from .widgets import (
-    LogWidget,
+    AddRoomDialog,
     QtLogBridge,
-    RecordingHistoryDialog,
     RoomEditDialog,
-    RoomListWidget,
-    SettingsDialog,
+    ask_confirm,
+    choose_existing_file,
+    choose_save_file,
+    show_info,
+    show_warning,
 )
 
 logger = logging.getLogger(__name__)
+
+PAGE_ROOMS = 0
+PAGE_HISTORY = 1
+PAGE_LOGS = 2
+PAGE_SETTINGS = 3
 
 
 class MainWindow(QMainWindow):
@@ -58,6 +63,8 @@ class MainWindow(QMainWindow):
         settings_service: Optional[SettingsService] = None,
         database: Optional[Database] = None,
         on_settings_applied: Optional[Callable[[AppSettings], None]] = None,
+        theme_manager: Optional[ThemeManager] = None,
+        log_dir: Optional[Path] = None,
     ) -> None:
         super().__init__()
         self._service = service
@@ -66,98 +73,121 @@ class MainWindow(QMainWindow):
         self._settings_service = settings_service
         self._database = database
         self._on_settings_applied = on_settings_applied
+        self._log_dir = log_dir
+        self._closing = False
+        self._tray_hint_shown = False
+
         self.setWindowTitle(f"抖音直播录制工具 v{__version__}")
-        self.resize(900, 600)
+        self.resize(1120, 740)
+        self.setMinimumSize(900, 600)
+        self.setWindowIcon(icons.app_icon())
 
         # 日志桥接（处理器由 QtLogBridge 自行挂载，关闭时必须解除）
         self._log_bridge = QtLogBridge()
 
+        self._theme = theme_manager or ThemeManager(
+            QApplication.instance(), database, self
+        )
+
         self._build_ui()
         self._connect_signals()
         self._load_initial_rooms()
+        self._setup_tray()
+        self._apply_theme()
+        self._refresh_summary()
 
+    # ------------------------------------------------------------------
+    # 构建
+    # ------------------------------------------------------------------
     def _build_ui(self) -> None:
         central = QWidget()
+        central.setObjectName("Root")
         self.setCentralWidget(central)
-        layout = QVBoxLayout(central)
+        root = QHBoxLayout(central)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
 
-        # 工具栏按钮
-        toolbar = QToolBar()
-        toolbar.setMovable(False)
-        self.addToolBar(toolbar)
+        self.sidebar = Sidebar()
+        root.addWidget(self.sidebar)
 
-        self.btn_add = QPushButton("添加房间")
-        self.btn_edit = QPushButton("编辑房间")
-        self.btn_remove = QPushButton("删除房间")
-        self.btn_start = QPushButton("开始监控")
-        self.btn_stop = QPushButton("停止监控")
-        self.btn_record_start = QPushButton("开始录制")
-        self.btn_record_stop = QPushButton("停止录制")
-        toolbar.addWidget(self.btn_add)
-        toolbar.addWidget(self.btn_edit)
-        toolbar.addWidget(self.btn_remove)
-        toolbar.addSeparator()
-        toolbar.addWidget(self.btn_start)
-        toolbar.addWidget(self.btn_stop)
-        toolbar.addSeparator()
-        toolbar.addWidget(self.btn_record_start)
-        toolbar.addWidget(self.btn_record_stop)
-        self.chk_auto_record = QCheckBox("自动录制")
-        self.chk_auto_record.setChecked(self._auto_record)
-        toolbar.addWidget(self.chk_auto_record)
-        toolbar.addSeparator()
-        self.btn_history = QPushButton("录制历史")
-        self.btn_open_dir = QPushButton("打开录制目录")
-        toolbar.addWidget(self.btn_history)
-        toolbar.addWidget(self.btn_open_dir)
-        toolbar.addSeparator()
-        self.btn_settings = QPushButton("设置")
-        self.btn_backup = QPushButton("备份数据")
-        self.btn_restore = QPushButton("恢复备份")
-        toolbar.addWidget(self.btn_settings)
-        toolbar.addWidget(self.btn_backup)
-        toolbar.addWidget(self.btn_restore)
-        if self._settings_service is None:
-            self.btn_settings.setEnabled(False)
-        if self._database is None:
-            self.btn_backup.setEnabled(False)
-            self.btn_restore.setEnabled(False)
+        self.pages = QStackedWidget()
+        self.pages.setObjectName("ContentRoot")
+        self.rooms_page = RoomsPage(self._auto_record)
+        self.history_page = HistoryPage()
+        self.logs_page = LogsPage()
+        if self._settings_service is not None:
+            current = self._settings_service.load()
+            self.settings_page: Optional[SettingsPage] = SettingsPage(
+                self._settings_service,
+                current,
+                self._theme,
+                backup_enabled=self._database is not None,
+                restore_enabled=self._database is not None,
+            )
+        else:
+            self.settings_page = None
+            placeholder = QWidget()
+            placeholder_layout = QVBoxLayout(placeholder)
+            label = QLabel("当前运行方式未启用设置服务。")
+            label.setObjectName("Muted")
+            placeholder_layout.addWidget(label)
+            placeholder_layout.addStretch(1)
+        self.pages.addWidget(self.rooms_page)
+        self.pages.addWidget(self.history_page)
+        self.pages.addWidget(self.logs_page)
+        self.pages.addWidget(
+            self.settings_page if self.settings_page is not None else placeholder
+        )
+        root.addWidget(self.pages, 1)
 
-        # 分割器：上方房间列表，下方日志
-        splitter = QSplitter(Qt.Orientation.Vertical)
-        self.room_list = RoomListWidget()
-        self.log_widget = LogWidget()
-        splitter.addWidget(self.room_list)
-        splitter.addWidget(self.log_widget)
-        splitter.setStretchFactor(0, 3)
-        splitter.setStretchFactor(1, 1)
-        layout.addWidget(splitter)
+        # 兼容既有调用点
+        self.room_list = self.rooms_page.room_list
+        self.log_widget = self.logs_page.log_widget
+        self.chk_auto_record = self.rooms_page.chk_auto_record
+        if self.settings_page is not None:
+            self.btn_backup = self.settings_page.btn_backup
+            self.btn_restore = self.settings_page.btn_restore
 
-        # 状态栏
         self.setStatusBar(QStatusBar())
+        self.statusBar().setSizeGripEnabled(False)
         self.status_label = QLabel("就绪")
-        self.statusBar().addWidget(self.status_label)
+        self.statusBar().addWidget(self.status_label, 1)
+        self.summary_label = QLabel("")
+        self.summary_label.setObjectName("Muted")
+        self.statusBar().addPermanentWidget(self.summary_label)
 
     def _connect_signals(self) -> None:
-        self.btn_add.clicked.connect(self._on_add_room)
-        self.btn_edit.clicked.connect(self._on_edit_room)
-        self.btn_remove.clicked.connect(self._on_remove_room)
-        self.btn_start.clicked.connect(self._on_start_monitor)
-        self.btn_stop.clicked.connect(self._on_stop_monitor)
-        self.btn_record_start.clicked.connect(self._on_start_recording)
-        self.btn_record_stop.clicked.connect(self._on_stop_recording)
-        self.chk_auto_record.toggled.connect(self._on_auto_record_toggled)
-        self.btn_history.clicked.connect(self._on_show_history)
-        self.btn_open_dir.clicked.connect(self._on_open_recordings_dir)
-        self.btn_settings.clicked.connect(self._on_open_settings)
-        self.btn_backup.clicked.connect(self._on_backup_database)
-        self.btn_restore.clicked.connect(self._on_restore_database)
+        self.sidebar.page_selected.connect(self._navigate)
+        self.rooms_page.add_requested.connect(self._on_add_room)
+        self.rooms_page.edit_requested.connect(self._on_edit_room)
+        self.rooms_page.remove_requested.connect(self._on_remove_room)
+        self.rooms_page.monitor_toggle_requested.connect(self._on_toggle_monitor)
+        self.rooms_page.record_toggle_requested.connect(self._on_toggle_record)
+        self.rooms_page.open_dir_requested.connect(self._on_open_recordings_dir)
+        self.rooms_page.auto_record_changed.connect(self._on_auto_record_toggled)
+        self.rooms_page.selection_changed.connect(self._update_room_actions)
+
+        self.history_page.refresh_requested.connect(self._refresh_history)
+        self.history_page.open_dir_requested.connect(self._on_open_recordings_dir)
+        self.history_page.open_file_requested.connect(self._open_file)
+        self.history_page.open_folder_requested.connect(self._open_file_folder)
+
+        self.logs_page.open_dir_requested.connect(self._on_open_log_dir)
+
+        if self.settings_page is not None:
+            self.settings_page.settings_saved.connect(self._on_settings_saved)
+            self.settings_page.backup_requested.connect(self._on_backup_database)
+            self.settings_page.restore_requested.connect(self._on_restore_database)
+            if self._database is None:
+                self.settings_page.btn_backup.setEnabled(False)
+                self.settings_page.btn_restore.setEnabled(False)
 
         svc = self._service
         svc.room_added.connect(self._on_room_added)
-        svc.room_updated.connect(self.room_list.update_room)
-        svc.room_removed.connect(self.room_list.remove_room)
+        svc.room_updated.connect(self._on_room_updated)
+        svc.room_removed.connect(self._on_room_removed)
         svc.room_state_updated.connect(self.room_list.update_state)
+        svc.room_state_updated.connect(self._on_room_state_updated)
         svc.task_error.connect(self._on_task_error)
         svc.task_stopped.connect(self._on_task_stopped)
         self._log_bridge.log_emitted.connect(self.log_widget.append_log)
@@ -168,41 +198,106 @@ class MainWindow(QMainWindow):
         rec.recording_error.connect(self._on_recording_error)
         rec.recording_reconnecting.connect(self._on_recording_reconnecting)
 
+        self._theme.theme_changed.connect(self._on_theme_changed)
+
     def _load_initial_rooms(self) -> None:
         for room in self._service.get_rooms():
             if room.id is not None:
                 self.room_list.add_room(room.id, room.web_rid, room.display_name)
+                self.room_list.set_monitoring(
+                    room.id, self._service.is_monitoring(room.id)
+                )
+                self.room_list.set_recording(
+                    room.id, self._recording.is_recording(room.id)
+                )
+        self.rooms_page.refresh_empty_state()
 
-    # ---------- 槽函数 ----------
+    # ------------------------------------------------------------------
+    # 托盘
+    # ------------------------------------------------------------------
+    def _setup_tray(self) -> None:
+        self._tray: Optional[TrayController] = TrayController(self)
+        app = QApplication.instance()
+        if self._tray is not None and self._tray.available:
+            if app is not None:
+                app.setQuitOnLastWindowClosed(False)
+            self._tray.show_requested.connect(self._restore_window)
+            self._tray.quit_requested.connect(self.close)
+            self._tray.auto_record_changed.connect(self.chk_auto_record.setChecked)
+            self._tray.open_dir_requested.connect(self._on_open_recordings_dir)
+            self._tray.start_all_requested.connect(self._start_all_monitoring)
+            self._tray.stop_all_requested.connect(self._stop_all_monitoring)
+            self._tray.set_auto_record(self.chk_auto_record.isChecked())
+            self.sidebar.set_tray_note("最小化后在托盘运行")
+        else:
+            self._tray = None
+            if app is not None:
+                app.setQuitOnLastWindowClosed(True)
+            self.sidebar.set_tray_note("系统托盘不可用")
+            logger.warning("系统托盘不可用，窗口关闭将直接退出")
+
+    def _hide_to_tray(self) -> None:
+        if self._tray is None or self._closing or not self.isMinimized():
+            return
+        self.hide()
+        self.setWindowState(Qt.WindowState.WindowNoState)
+        if not self._tray_hint_shown:
+            self._tray.show_message(
+                "已最小化到托盘",
+                "直播监控与录制继续运行，双击托盘图标可恢复主窗口。",
+            )
+            self._tray_hint_shown = True
+
+    def _restore_window(self) -> None:
+        self.showNormal()
+        self.setWindowState(Qt.WindowState.WindowNoState)
+        self.activateWindow()
+        self.raise_()
+
+    # ------------------------------------------------------------------
+    # 导航
+    # ------------------------------------------------------------------
+    def _navigate(self, index: int) -> None:
+        if index < 0 or index >= self.pages.count():
+            return
+        self.sidebar.set_current(index)
+        self.pages.setCurrentIndex(index)
+        if index == PAGE_HISTORY:
+            self._refresh_history()
+        elif index == PAGE_SETTINGS and self.settings_page is not None:
+            self.settings_page.sync_theme()
+
+    # ------------------------------------------------------------------
+    # 房间操作
+    # ------------------------------------------------------------------
     def _on_add_room(self) -> None:
-        text, ok = QInputDialog.getText(
-            self,
-            "添加直播间",
-            "直播间链接或 ID（例如 https://live.douyin.com/123456 "
-            "或 https://www.douyin.com/follow/live/123456）:",
-        )
-        if not ok or not text.strip():
+        dialog = AddRoomDialog(self)
+        if dialog.exec() != AddRoomDialog.DialogCode.Accepted:
             return
+        raw_web_rid, name = dialog.values()
         try:
-            web_rid = validate_web_rid(text)
+            web_rid = validate_web_rid(raw_web_rid)
         except ValueError as e:
-            QMessageBox.warning(self, "无法添加直播间", str(e))
+            show_warning(self, "无法添加直播间", str(e))
             return
-        name, ok2 = QInputDialog.getText(self, "添加直播间", "显示名称（可选）:")
-        room_id = self._service.add_room(web_rid, name.strip() if ok2 else "")
+        room_id = self._service.add_room(web_rid, name.strip())
         if room_id is None:
-            QMessageBox.warning(
+            show_warning(
                 self, "添加失败", f"无法添加直播间 {web_rid}，可能已存在。"
             )
+            return
+        self.status_label.setText(f"已添加直播间 {room_id}")
+        self._navigate(PAGE_ROOMS)
+        self._refresh_summary()
 
     def _on_edit_room(self) -> None:
         room_id = self.room_list.selected_room_id()
         if room_id is None:
-            QMessageBox.information(self, "提示", "请先选择一个房间。")
+            show_info(self, "提示", "请先选择一个直播间。")
             return
         room = self._service.get_room(room_id)
         if room is None:
-            QMessageBox.warning(self, "错误", "房间不存在。")
+            show_warning(self, "错误", "直播间不存在。")
             return
         dialog = RoomEditDialog(room.web_rid, room.display_name, self)
         if dialog.exec() != RoomEditDialog.DialogCode.Accepted:
@@ -212,96 +307,191 @@ class MainWindow(QMainWindow):
             room_id, web_rid=web_rid, display_name=display_name
         )
         if not ok:
-            QMessageBox.warning(self, "更新失败", error)
+            show_warning(self, "更新失败", error)
         else:
-            self.status_label.setText(f"房间 {room_id} 已更新")
+            self.status_label.setText(f"直播间 {room_id} 已更新")
 
     def _on_remove_room(self) -> None:
         room_id = self.room_list.selected_room_id()
         if room_id is None:
-            QMessageBox.information(self, "提示", "请先选择一个房间。")
+            show_info(self, "提示", "请先选择一个直播间。")
             return
-        answer = QMessageBox.question(
+        name = self.room_list.selected_display_name()
+        if not ask_confirm(
             self,
-            "确认删除",
-            f"确定删除房间 {room_id}？录制文件不会删除。",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
-        )
-        if answer != QMessageBox.StandardButton.Yes:
+            "删除直播间",
+            f"确定删除“{name}”？",
+            informative="只会删除监控列表中的房间，已录制的文件不会被删除。",
+            ok_text="删除",
+            cancel_text="取消",
+            danger=True,
+        ):
             return
         if self._recording.is_recording(room_id):
             self._recording.stop_recording(room_id)
         self._service.remove_room(room_id)
+        self._refresh_summary()
+
+    def _on_toggle_monitor(self) -> None:
+        room_id = self.room_list.selected_room_id()
+        if room_id is None:
+            return
+        if self._service.is_monitoring(room_id):
+            self._on_stop_monitor()
+        else:
+            self._on_start_monitor()
+
+    def _on_toggle_record(self) -> None:
+        room_id = self.room_list.selected_room_id()
+        if room_id is None:
+            return
+        if self._recording.is_recording(room_id):
+            self._on_stop_recording()
+        else:
+            self._on_start_recording()
 
     def _on_start_recording(self) -> None:
         room_id = self.room_list.selected_room_id()
         if room_id is None:
-            QMessageBox.information(self, "提示", "请先选择一个房间。")
+            show_info(self, "提示", "请先选择一个直播间。")
             return
         stream_url = self._service.get_stream_url(room_id)
         if not stream_url:
-            QMessageBox.information(
+            show_info(
                 self,
                 "无法录制",
                 "尚未解析到直播流地址。请先开始监控并等待解析成功。",
             )
             return
-        self._recording.start_recording(room_id, stream_url)
+        try:
+            self._recording.start_recording(room_id, stream_url)
+        except (RuntimeError, ValueError, OSError) as e:
+            show_warning(self, "无法开始录制", str(e))
+            return
+        self._update_room_actions()
+        self._refresh_summary()
 
     def _on_stop_recording(self) -> None:
         room_id = self.room_list.selected_room_id()
         if room_id is None:
-            QMessageBox.information(self, "提示", "请先选择一个房间。")
+            show_info(self, "提示", "请先选择一个直播间。")
             return
         if not self._recording.is_recording(room_id):
-            QMessageBox.information(self, "提示", "该房间当前未在录制。")
+            show_info(self, "提示", "该直播间当前未在录制。")
             return
         self.recording_stop_requested.emit(room_id)
         self._recording.stop_recording(room_id)
+        self._update_room_actions()
+        self._refresh_summary()
 
     def _on_start_monitor(self) -> None:
         room_id = self.room_list.selected_room_id()
         if room_id is None:
-            QMessageBox.information(self, "提示", "请先选择一个房间。")
+            show_info(self, "提示", "请先选择一个直播间。")
             return
         try:
             self._service.start_monitor(room_id)
             monitoring = self._service.is_monitoring(room_id)
         except RuntimeError as e:
-            QMessageBox.warning(self, "无法开始监控", str(e))
+            show_warning(self, "无法开始监控", str(e))
             monitoring = False
         # 以后台实际状态为准，避免 Session 创建失败时界面仍显示“监控中”。
         self.room_list.set_monitoring(room_id, monitoring)
         if monitoring:
-            self.status_label.setText(f"监控中: 房间 {room_id}")
+            self.status_label.setText(f"监控中: 直播间 {room_id}")
         else:
-            self.status_label.setText(f"房间 {room_id} 监控未启动，请查看日志")
+            self.status_label.setText(
+                f"直播间 {room_id} 监控未启动，请查看日志"
+            )
+        self._update_room_actions()
+        self._refresh_summary()
 
     def _on_stop_monitor(self) -> None:
         room_id = self.room_list.selected_room_id()
         if room_id is None:
-            QMessageBox.information(self, "提示", "请先选择一个房间。")
+            show_info(self, "提示", "请先选择一个直播间。")
             return
         self._service.stop_monitor(room_id)
         self.room_list.set_monitoring(room_id, False)
+        self.status_label.setText(f"直播间 {room_id} 已停止监控")
+        self._update_room_actions()
+        self._refresh_summary()
+
+    def _start_all_monitoring(self) -> None:
+        started = 0
+        for room in self._service.get_rooms():
+            if room.id is None or self._service.is_monitoring(room.id):
+                continue
+            try:
+                self._service.start_monitor(room.id)
+            except RuntimeError as e:
+                logger.warning("开始监控失败 room_id=%s: %s", room.id, e)
+                continue
+            self.room_list.set_monitoring(
+                room.id, self._service.is_monitoring(room.id)
+            )
+            started += 1
+        self.status_label.setText(f"已开始监控 {started} 个直播间")
+        self._refresh_summary()
+
+    def _stop_all_monitoring(self) -> None:
+        stopped = 0
+        for room in self._service.get_rooms():
+            if room.id is None or not self._service.is_monitoring(room.id):
+                continue
+            self._service.stop_monitor(room.id)
+            self.room_list.set_monitoring(room.id, False)
+            stopped += 1
+        self.status_label.setText(f"已停止监控 {stopped} 个直播间")
+        self._refresh_summary()
 
     def _on_room_added(self, room_id: int, web_rid: str, display_name: str) -> None:
         self.room_list.add_room(room_id, web_rid, display_name)
-        self.status_label.setText(f"已添加房间 {room_id}")
+        self.rooms_page.refresh_empty_state()
+        self.status_label.setText(f"已添加直播间 {room_id}")
+        self._refresh_summary()
 
+    def _on_room_updated(self, room_id: int, web_rid: str, display_name: str) -> None:
+        self.room_list.update_room(room_id, web_rid, display_name)
+
+    def _on_room_removed(self, room_id: int) -> None:
+        self.room_list.remove_room(room_id)
+        self.rooms_page.refresh_empty_state()
+        self._refresh_summary()
+
+    def _on_room_state_updated(self, _room_id: int, _snapshot: dict) -> None:
+        self._refresh_summary()
+
+    def _update_room_actions(self) -> None:
+        room_id = self.room_list.selected_room_id()
+        if room_id is None:
+            self.rooms_page.set_action_state(False, False, False)
+            return
+        self.rooms_page.set_action_state(
+            True,
+            self._service.is_monitoring(room_id),
+            self._recording.is_recording(room_id),
+        )
+
+    # ------------------------------------------------------------------
+    # 后台事件
+    # ------------------------------------------------------------------
     def _on_task_error(self, room_id: int, error: str) -> None:
         logger.error("房间 %s 监控异常: %s", room_id, error)
-        self.status_label.setText(f"房间 {room_id} 异常: {error}")
+        self.status_label.setText(f"直播间 {room_id} 异常: {error}")
 
     def _on_task_stopped(self, room_id: int) -> None:
         self.room_list.set_monitoring(room_id, False)
-        self.status_label.setText(f"房间 {room_id} 已停止监控")
+        self.status_label.setText(f"直播间 {room_id} 已停止监控")
+        self._update_room_actions()
+        self._refresh_summary()
 
     def _on_recording_started(self, room_id: int, snapshot: dict) -> None:
         self.room_list.set_recording(room_id, True)
-        self.status_label.setText(f"房间 {room_id} 开始录制")
+        self.status_label.setText(f"直播间 {room_id} 开始录制")
         logger.info("房间 %s 开始录制: %s", room_id, snapshot.get("file_path"))
+        self._update_room_actions()
+        self._refresh_summary()
 
     def _on_recording_finished(self, room_id: int, snapshot: dict) -> None:
         self.room_list.set_recording(room_id, False)
@@ -309,10 +499,10 @@ class MainWindow(QMainWindow):
         status = snapshot.get("status", "")
         error = snapshot.get("error", "")
         if status == "failed":
-            self.status_label.setText(f"房间 {room_id} 录制失败: {error}")
+            self.status_label.setText(f"直播间 {room_id} 录制失败: {error}")
         else:
             self.status_label.setText(
-                f"房间 {room_id} 录制结束，文件 {size} 字节"
+                f"直播间 {room_id} 录制结束，文件 {size} 字节"
             )
         logger.info(
             "房间 %s 录制结束 status=%s size=%s file=%s",
@@ -321,14 +511,21 @@ class MainWindow(QMainWindow):
             size,
             snapshot.get("file_path"),
         )
+        if self.pages.currentIndex() == PAGE_HISTORY:
+            self._refresh_history()
+        self._update_room_actions()
+        self._refresh_summary()
 
     def _on_recording_error(self, room_id: int, message: str) -> None:
-        self.status_label.setText(f"房间 {room_id} 录制错误: {message}")
+        self.room_list.set_recording(room_id, False)
+        self.status_label.setText(f"直播间 {room_id} 录制错误: {message}")
+        self._update_room_actions()
+        self._refresh_summary()
 
     def _on_recording_reconnecting(self, room_id: int, snapshot: dict) -> None:
         self.room_list.set_recording(room_id, True)
         self.status_label.setText(
-            f"房间 {room_id} 录制中断，"
+            f"直播间 {room_id} 录制中断，"
             f"{snapshot.get('delay_s', 0):.0f} 秒后自动续录"
             f"（第 {snapshot.get('attempt', 1)}/{snapshot.get('max_attempts', 1)} 次）"
         )
@@ -341,40 +538,68 @@ class MainWindow(QMainWindow):
 
     def _on_auto_record_toggled(self, enabled: bool) -> None:
         self._auto_record = enabled
+        if self._tray is not None:
+            self._tray.set_auto_record(enabled)
         self.auto_record_toggled.emit(enabled)
         self.status_label.setText("自动录制已开启" if enabled else "自动录制已关闭")
 
+    # ------------------------------------------------------------------
+    # 历史 / 目录
+    # ------------------------------------------------------------------
+    def _refresh_history(self) -> None:
+        try:
+            rows = self._recording.list_history(limit=500)
+        except Exception:  # noqa: BLE001 - 历史读取失败不应影响录制
+            logger.exception("读取录制历史失败")
+            rows = []
+        self.history_page.set_records(rows)
+
     def _on_show_history(self) -> None:
-        rows = self._recording.list_history(limit=200)
-        if not rows:
-            QMessageBox.information(self, "录制历史", "暂无录制记录。")
-            return
-        RecordingHistoryDialog(rows, self).exec()
+        self._navigate(PAGE_HISTORY)
 
     def _on_open_recordings_dir(self) -> None:
+        target = self._recording.output_dir
         try:
-            self._recording.output_dir.mkdir(parents=True, exist_ok=True)
+            target.mkdir(parents=True, exist_ok=True)
         except OSError as e:
-            QMessageBox.warning(self, "无法打开", f"录制目录不可用：{e}")
+            show_warning(self, "无法打开", f"录制目录不可用：{e}")
             return
-        QDesktopServices.openUrl(
-            QUrl.fromLocalFile(str(self._recording.output_dir))
-        )
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(target)))
 
-    def _on_open_settings(self) -> None:
-        if self._settings_service is None:
+    def _on_open_log_dir(self) -> None:
+        if self._log_dir is None:
+            show_info(self, "提示", "当前运行方式未提供日志目录。")
             return
-        dialog = SettingsDialog(
-            self._settings_service, self._settings_service.load(), self
-        )
-        if dialog.exec() != QDialog.DialogCode.Accepted:
+        try:
+            self._log_dir.mkdir(parents=True, exist_ok=True)
+        except OSError as e:
+            show_warning(self, "无法打开", f"日志目录不可用：{e}")
             return
-        saved = dialog.result_settings
-        if saved is None:
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(self._log_dir)))
+
+    @staticmethod
+    def _open_file(path: str) -> None:
+        if path:
+            QDesktopServices.openUrl(QUrl.fromLocalFile(path))
+
+    @staticmethod
+    def _open_file_folder(path: str) -> None:
+        if not path:
             return
+        folder = Path(path).parent
+        if folder.exists():
+            QDesktopServices.openUrl(QUrl.fromLocalFile(str(folder)))
+
+    # ------------------------------------------------------------------
+    # 设置
+    # ------------------------------------------------------------------
+    def _on_settings_saved(self, saved: AppSettings) -> None:
         if self._on_settings_applied is not None:
             self._on_settings_applied(saved)
         self.status_label.setText("设置已保存")
+
+    def _on_open_settings(self) -> None:
+        self._navigate(PAGE_SETTINGS)
 
     def _on_backup_database(self) -> None:
         if self._database is None:
@@ -383,80 +608,173 @@ class MainWindow(QMainWindow):
         try:
             backup_dir.mkdir(parents=True, exist_ok=True)
         except OSError as e:
-            QMessageBox.warning(self, "无法备份", f"备份目录不可用：{e}")
+            show_warning(self, "无法备份", f"备份目录不可用：{e}")
             return
         default_name = backup_dir / f"app-backup-{datetime.now():%Y%m%d-%H%M%S}.db"
-        path, _ = QFileDialog.getSaveFileName(
-            self, "备份数据库", str(default_name), "SQLite 数据库 (*.db)"
+        path = choose_save_file(
+            self,
+            "备份数据库",
+            str(default_name),
+            ["SQLite 数据库 (*.db)"],
         )
         if not path:
             return
         target = Path(path)
-        if target.exists():
-            answer = QMessageBox.question(
-                self,
-                "覆盖文件",
-                f"目标文件已存在，是否覆盖？\n{target}",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                QMessageBox.StandardButton.No,
-            )
-            if answer != QMessageBox.StandardButton.Yes:
-                return
+        if target.exists() and not ask_confirm(
+            self,
+            "覆盖文件",
+            "目标文件已存在，是否覆盖？",
+            informative=str(target),
+            ok_text="覆盖",
+            cancel_text="取消",
+            danger=True,
+        ):
+            return
         try:
             dest = self._database.backup_to(target)
         except Exception as e:  # noqa: BLE001 - 备份失败必须明确反馈
             logger.exception("数据库备份失败")
-            QMessageBox.warning(self, "备份失败", f"数据库备份失败：{e}")
+            show_warning(self, "备份失败", f"数据库备份失败：{e}")
             return
-        QMessageBox.information(self, "备份完成", f"数据库已备份到：\n{dest}")
+        show_info(self, "备份完成", f"数据库已备份到：\n{dest}")
 
     def _on_restore_database(self) -> None:
         if self._database is None:
             return
         start_dir = self._database.db_path.parent / "backups"
-        path, _ = QFileDialog.getOpenFileName(
+        path = choose_existing_file(
             self,
             "选择数据库备份",
             str(start_dir),
-            "SQLite 数据库 (*.db);;所有文件 (*)",
+            ["SQLite 数据库 (*.db)", "所有文件 (*)"],
         )
         if not path:
             return
         backup_path = Path(path)
         ok, message = verify_sqlite(backup_path)
         if not ok:
-            QMessageBox.warning(
+            show_warning(
                 self, "无法恢复", f"所选文件不是可用的数据库备份：\n{message}"
             )
             return
-        answer = QMessageBox.question(
+        if not ask_confirm(
             self,
             "确认恢复",
-            "恢复将在退出并重新启动程序后生效；恢复前会自动为当前数据库创建安全副本。"
-            "录制文件不会被删除。是否继续？",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
-        )
-        if answer != QMessageBox.StandardButton.Yes:
+            "恢复将在退出并重新启动程序后生效。",
+            informative=(
+                "恢复前会自动为当前数据库创建安全副本；录制文件不会被删除。"
+                "是否继续？"
+            ),
+            ok_text="安排恢复",
+            cancel_text="取消",
+        ):
             return
         try:
             prepare_restore(backup_path, self._database.db_path.parent)
         except (ValueError, OSError) as e:
-            QMessageBox.warning(self, "无法安排恢复", str(e))
+            show_warning(self, "无法安排恢复", str(e))
             return
-        QMessageBox.information(
+        show_info(
             self,
             "已安排恢复",
             "恢复请求已保存。请关闭并重新启动程序以完成恢复。",
         )
 
+    # ------------------------------------------------------------------
+    # 状态 / 主题
+    # ------------------------------------------------------------------
+    def _refresh_summary(self) -> None:
+        rooms = self._service.get_rooms()
+        monitoring = 0
+        for room in rooms:
+            if room.id is not None and self._service.is_monitoring(room.id):
+                monitoring += 1
+        try:
+            recording = len(self._recording.active_rooms())
+        except Exception:  # noqa: BLE001
+            recording = 0
+        self.summary_label.setText(
+            f"{len(rooms)} 个直播间 · {monitoring} 监控中 · {recording} 录制中"
+        )
+        if self._tray is not None:
+            self._tray.set_recording_count(recording)
+
+    def _on_theme_changed(self, _effective: str) -> None:
+        self._apply_theme()
+
+    def _apply_theme(self) -> None:
+        tokens = self._theme.tokens
+        self.sidebar.set_theme_tokens(tokens)
+        self.rooms_page.set_theme_tokens(tokens)
+        self.history_page.set_theme_tokens(tokens)
+        self.logs_page.set_theme_tokens(tokens)
+        if self.settings_page is not None:
+            self.settings_page.set_theme_tokens(tokens)
+            self.settings_page.sync_theme()
+        self.sidebar.set_theme_note(self._theme.effective_label())
+        QTimer.singleShot(0, lambda: self._theme.refresh_title_bar(self))
+
     def detach_logging(self) -> None:
         """解除日志桥接，必须在窗口销毁前调用。"""
         self._log_bridge.close()
 
-    def closeEvent(self, event) -> None:  # type: ignore[override]
-        logger.info("主窗口关闭")
-        self._recording.shutdown()
-        self._service.shutdown()
+    def dispose(self) -> None:
+        """应用退出时释放托盘与日志桥接（可重复调用）。"""
+        if self._tray is not None:
+            self._tray.dispose()
+            self._tray = None
         self.detach_logging()
-        super().closeEvent(event)
+
+    # ------------------------------------------------------------------
+    # 窗口事件
+    # ------------------------------------------------------------------
+    def showEvent(self, event) -> None:  # type: ignore[override]
+        super().showEvent(event)
+        self._theme.refresh_title_bar(self)
+
+    def changeEvent(self, event) -> None:  # type: ignore[override]
+        if (
+            event.type() == QEvent.Type.WindowStateChange
+            and self.isMinimized()
+            and self._tray is not None
+            and not self._closing
+        ):
+            QTimer.singleShot(0, self._hide_to_tray)
+        super().changeEvent(event)
+
+    def closeEvent(self, event) -> None:  # type: ignore[override]
+        if self._closing:
+            event.accept()
+            return
+        active = []
+        try:
+            active = self._recording.active_rooms()
+        except Exception:  # noqa: BLE001
+            logger.debug("读取活动录制失败", exc_info=True)
+        if active and not ask_confirm(
+            self,
+            "退出前停止录制",
+            f"当前有 {len(active)} 个直播间正在录制。",
+            informative="退出会安全停止录制并完成文件收尾，已录制的文件不会删除。",
+            ok_text="停止录制并退出",
+            cancel_text="继续录制",
+            danger=True,
+        ):
+            event.ignore()
+            return
+
+        self._closing = True
+        logger.info("主窗口关闭，开始退出（录制中房间=%s）", active)
+        try:
+            self._recording.shutdown()
+        except Exception:  # noqa: BLE001 - 退出路径必须继续清理
+            logger.exception("停止录制服务失败")
+        try:
+            self._service.shutdown()
+        except Exception:  # noqa: BLE001
+            logger.exception("停止监控服务失败")
+        self.dispose()
+        event.accept()
+        app = QApplication.instance()
+        if app is not None:
+            app.quit()

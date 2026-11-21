@@ -12,6 +12,8 @@ import urllib.request
 from pathlib import Path
 from typing import Any, Callable, Optional
 
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import QApplication
 
 from .. import __version__
@@ -25,6 +27,7 @@ from ..infrastructure.http_client import UrllibHttpClient
 from ..infrastructure.logging_config import setup_logging
 from ..infrastructure.process_registry import ProcessRegistry
 from ..presentation.main_window import MainWindow
+from ..presentation.theme import ThemeManager, install_chinese_translations
 from .monitor_service import MonitorService
 from .recording_service import RecordingService, StreamRefresh
 from .settings_service import AppSettings, SettingsService
@@ -100,13 +103,21 @@ class Application:
                 "启动恢复结果: %s（安全副本=%s）", restore.message, restore.safety_copy
             )
 
+        if QApplication.instance() is None:
+            # 高 DPI：保留小数缩放比例，避免 125%/150% 下界面取整失真。
+            QGuiApplication.setHighDpiScaleFactorRoundingPolicy(
+                Qt.HighDpiScaleFactorRoundingPolicy.PassThrough
+            )
         self.qt_app = QApplication.instance() or QApplication([])
         self.qt_app.setApplicationName("抖音直播录制工具")
+        install_chinese_translations(self.qt_app)
 
         self.db = Database(self.config.db_path)
         interrupted_count = self.db.interrupt_running_sessions()
         if interrupted_count:
             logger.info("已将 %s 个遗留 running Session 标记为 interrupted", interrupted_count)
+        # 主题需在创建任何窗口前应用，避免启动时先闪一下默认样式。
+        self.theme = ThemeManager(self.qt_app, self.db)
         self.settings = SettingsService(self.db, self.config)
         current = self.settings.load()
         logger.info("FFmpeg 路径: %s", current.ffmpeg_path)
@@ -147,6 +158,8 @@ class Application:
             settings_service=self.settings,
             database=self.db,
             on_settings_applied=self._apply_settings,
+            theme_manager=self.theme,
+            log_dir=self.config.log_dir,
         )
         self.main_window.auto_record_toggled.connect(self._set_auto_record)
         self.main_window.recording_stop_requested.connect(
@@ -277,7 +290,7 @@ class Application:
         window = getattr(self, "main_window", None)
         if window is None:
             return
-        window.detach_logging()
+        window.dispose()
         window.hide()
         window.deleteLater()
         self.qt_app.processEvents()
