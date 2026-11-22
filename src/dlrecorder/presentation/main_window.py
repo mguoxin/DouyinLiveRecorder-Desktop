@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 from datetime import datetime
 from pathlib import Path
 from typing import Callable, Optional
@@ -53,6 +54,8 @@ class MainWindow(QMainWindow):
     auto_record_toggled = Signal(bool)
     # 用户主动点击“停止录制”（区别于自动停止），用于抑制自动录制重新拉起
     recording_stop_requested = Signal(int)
+    # 后台关闭完成（True=全部服务正常停止），跨线程排队回主线程
+    shutdown_finished = Signal(bool)
 
     def __init__(
         self,
@@ -76,6 +79,10 @@ class MainWindow(QMainWindow):
         self._log_dir = log_dir
         self._closing = False
         self._tray_hint_shown = False
+        self._shutdown_started = False
+        self._shutdown_complete = False
+        self._shutdown_thread: Optional[threading.Thread] = None
+        self._shutdown_ok = True
 
         self.setWindowTitle(f"抖音直播录制工具 v{__version__}")
         self.resize(1120, 740)
@@ -199,6 +206,9 @@ class MainWindow(QMainWindow):
         rec.recording_reconnecting.connect(self._on_recording_reconnecting)
 
         self._theme.theme_changed.connect(self._on_theme_changed)
+        self.shutdown_finished.connect(
+            self._on_shutdown_finished, Qt.ConnectionType.QueuedConnection
+        )
 
     def _load_initial_rooms(self) -> None:
         for room in self._service.get_rooms():
@@ -758,8 +768,12 @@ class MainWindow(QMainWindow):
         super().changeEvent(event)
 
     def closeEvent(self, event) -> None:  # type: ignore[override]
-        if self._closing:
+        if self._shutdown_complete:
             event.accept()
+            return
+        if self._shutdown_started:
+            # 关闭已在后台进行，忽略重复关闭请求，避免并发停止。
+            event.ignore()
             return
         active = []
         try:
@@ -779,17 +793,48 @@ class MainWindow(QMainWindow):
             return
 
         self._closing = True
-        logger.info("主窗口关闭，开始退出（录制中房间=%s）", active)
+        self._shutdown_started = True
+        logger.info("主窗口关闭，开始后台退出（录制中房间=%s）", active)
+        # 后台停止期间保持窗口可见并给出明确状态，避免用户误以为程序卡死。
+        if not self.isVisible():
+            self._restore_window()
+        self.status_label.setText("正在停止录制与监控，请稍候（最长约 30 秒）…")
+        central = self.centralWidget()
+        if central is not None:
+            central.setEnabled(False)
+        event.ignore()
+        self._shutdown_thread = threading.Thread(
+            target=self._shutdown_worker,
+            name="dlr-gui-shutdown",
+            daemon=True,
+        )
+        self._shutdown_thread.start()
+
+    def _shutdown_worker(self) -> None:
+        """在后台线程停止录制与监控；结果经 QueuedConnection 回到主线程。"""
+        ok = True
         try:
             self._recording.shutdown()
         except Exception:  # noqa: BLE001 - 退出路径必须继续清理
             logger.exception("停止录制服务失败")
+            ok = False
         try:
             self._service.shutdown()
         except Exception:  # noqa: BLE001
             logger.exception("停止监控服务失败")
-        self.dispose()
-        event.accept()
+            ok = False
+        self.shutdown_finished.emit(ok)
+
+    def _on_shutdown_finished(self, ok: bool) -> None:
+        self._shutdown_ok = ok
+        self._shutdown_complete = True
+        central = self.centralWidget()
+        if central is not None:
+            central.setEnabled(True)
+        self.status_label.setText(
+            "已停止录制与监控，正在退出…" if ok else "停止过程中出现异常，详见日志"
+        )
+        self.close()
         app = QApplication.instance()
         if app is not None:
             app.quit()

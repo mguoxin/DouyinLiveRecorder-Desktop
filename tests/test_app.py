@@ -673,6 +673,65 @@ def test_auto_record_resumes_after_offline_following_manual_stop(tmp_path, qt_ap
         application.shutdown()
 
 
+def test_close_is_async_and_eventually_stops_services(
+    tmp_path, qt_app, monkeypatch
+):
+    """关闭窗口不得阻塞 GUI 线程；停止完成后自动退出并保留状态提示。"""
+    seed = Database(tmp_path / "data" / "app.db")
+    room_id = seed.add_room("close-async", "关闭测试")
+    seed.close()
+
+    stub = tmp_path / "stub.py"
+    stub.write_text(RECORD_STUB, encoding="utf-8")
+
+    def builder(ffmpeg_path, stream_url, output_path):
+        # sleep 模式不响应 q，只能 terminate，用于制造有界的慢关闭。
+        return [sys.executable, str(stub), str(output_path), "sleep"]
+
+    application = Application(
+        base_dir=tmp_path,
+        recording_options={
+            "command_builder": builder,
+            "poll_interval_s": 0.05,
+            "stall_timeout_s": 0,
+            "stop_grace_s": 1.0,
+        },
+    )
+    started: list[dict] = []
+    application.recording.recording_started.connect(
+        lambda rid, snap: started.append(snap)
+    )
+    try:
+        application.recording.start_recording(
+            room_id, "https://example.invalid/live.flv"
+        )
+        _wait_for(lambda: bool(started))
+        path = Path(started[0]["file_path"])
+        _wait_for(lambda: path.exists())
+
+        from dlrecorder.presentation import main_window as main_window_module
+
+        monkeypatch.setattr(
+            main_window_module, "ask_confirm", lambda *args, **kwargs: True
+        )
+
+        began = time.monotonic()
+        application.main_window.close()
+        elapsed = time.monotonic() - began
+
+        assert elapsed < 0.5, "closeEvent 在 GUI 线程执行了阻塞式关闭"
+        assert application.main_window._shutdown_started is True
+        assert application.main_window._shutdown_complete is False
+        assert "正在停止" in application.main_window.status_label.text()
+
+        _wait_for(lambda: application.main_window._shutdown_complete, timeout=15.0)
+        assert application.main_window._shutdown_ok is True
+        assert application.recording.is_recording(room_id) is False
+        assert "已停止" in application.main_window.status_label.text()
+    finally:
+        application.shutdown()
+
+
 def test_room_removal_stops_recording_and_keeps_history(tmp_path, qt_app):
     seed = Database(tmp_path / "data" / "app.db")
     room_id = seed.add_room("remove-rec", "待删除录制")
