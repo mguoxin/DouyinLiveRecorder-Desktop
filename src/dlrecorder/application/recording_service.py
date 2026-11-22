@@ -831,11 +831,13 @@ class RecordingService(QObject):
         self.recording_finished.emit(
             active.room_id,
             {
+                # 会话级事件：没有分段产出，不携带分段字段。
+                "scope": "session",
                 "recording_id": None,
                 "room_id": active.room_id,
-                "file_path": str(active.file_path),
+                "file_path": "",
                 "status": status.value,
-                "file_size": 0,
+                "file_size": None,
                 "error": message if failed else "",
             },
         )
@@ -905,6 +907,8 @@ class RecordingService(QObject):
         self.recording_finished.emit(
             active.room_id,
             {
+                # 分段级事件：file_path/file_size 为该分段的真实值。
+                "scope": "segment",
                 "recording_id": active.recording_id,
                 "room_id": active.room_id,
                 "file_path": str(active.file_path),

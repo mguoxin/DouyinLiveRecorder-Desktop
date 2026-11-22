@@ -129,6 +129,7 @@ def test_start_and_stop_persists_history(env, qt_app):
     _wait_for(qt_app, lambda: bool(finished))
 
     result = finished[0][1]
+    assert result["scope"] == "segment"
     assert result["status"] == "completed"
     assert result["file_size"] > 0
     assert result["error"] == ""
@@ -515,7 +516,9 @@ def test_unknown_status_retry_is_bounded(env, qt_app):
     assert len(started) == 1
     assert finished[0]["status"] == "failed"
     assert "无法确认直播状态" in finished[0]["error"]
+    assert finished[-1]["scope"] == "session"
     assert finished[-1]["status"] == "failed"
+    assert finished[-1]["file_size"] is None
     assert "已尝试 1 次" in finished[-1]["error"]
     assert env.db.list_recordings(status="recording") == []
 
@@ -571,6 +574,7 @@ def test_resume_attempts_are_bounded(env, qt_app):
 
     # 初始分段 + 2 次续录分段
     assert len(started) == 3
+    assert finished[-1]["scope"] == "segment"
     assert finished[-1]["status"] == "failed"
     assert "已尝试 2 次" in finished[-1]["error"]
     assert env.db.list_recordings(status="recording") == []
@@ -595,7 +599,10 @@ def test_confirmed_offline_during_resume_ends_session(env, qt_app):
     _wait_for(qt_app, lambda: len(finished) == 2, timeout=15)
 
     assert len(started) == 1
+    assert finished[-1]["scope"] == "session"
     assert finished[-1]["recording_id"] is None
+    assert finished[-1]["file_path"] == ""
+    assert finished[-1]["file_size"] is None
     assert finished[-1]["status"] == "completed"
     assert service.is_recording(env.room_id) is False
 
@@ -620,7 +627,10 @@ def test_stop_while_waiting_for_resume_cancels_retry(env, qt_app):
     _wait_for(qt_app, lambda: len(finished) == 2)
 
     assert len(started) == 1
+    assert finished[-1]["scope"] == "session"
     assert finished[-1]["recording_id"] is None
+    assert finished[-1]["file_path"] == ""
+    assert finished[-1]["file_size"] is None
     assert finished[-1]["status"] == "failed"
     assert "手动停止" in finished[-1]["error"]
     assert service.is_recording(env.room_id) is False

@@ -3,6 +3,7 @@
 使用 offscreen 平台避免弹出真实窗口。
 """
 import asyncio
+import logging
 import os
 import sys
 import time
@@ -67,6 +68,48 @@ def test_app_starts_and_closes(app):
     """应用能够正常初始化和关闭。"""
     assert app.main_window is not None
     assert app.service is not None
+
+
+def test_session_finished_does_not_render_zero_size(app, caplog):
+    """会话级结束事件不展示文件大小，日志也不出现 size=0。"""
+    caplog.set_level(logging.INFO, logger="dlrecorder.presentation.main_window")
+    app.main_window._on_recording_finished(
+        42,
+        {
+            "scope": "session",
+            "recording_id": None,
+            "room_id": 42,
+            "file_path": "",
+            "status": "completed",
+            "file_size": None,
+            "error": "",
+        },
+    )
+
+    text = app.main_window.status_label.text()
+    assert "会话结束" in text
+    assert "0 字节" not in text
+    messages = [record.getMessage() for record in caplog.records]
+    assert any("scope=session" in message for message in messages)
+    assert not any("size=0" in message for message in messages)
+
+
+def test_segment_finished_still_renders_file_size(app):
+    """分段级结束事件保持原有文件大小展示。"""
+    app.main_window._on_recording_finished(
+        42,
+        {
+            "scope": "segment",
+            "recording_id": 7,
+            "room_id": 42,
+            "file_path": "C:/recordings/a.ts",
+            "status": "completed",
+            "file_size": 2048,
+            "error": "",
+        },
+    )
+
+    assert "2048 字节" in app.main_window.status_label.text()
 
 
 def test_add_room_persists_to_db(app):

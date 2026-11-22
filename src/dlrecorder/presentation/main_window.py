@@ -504,18 +504,24 @@ class MainWindow(QMainWindow):
 
     def _on_recording_finished(self, room_id: int, snapshot: dict) -> None:
         self.room_list.set_recording(room_id, False)
-        size = snapshot.get("file_size", 0)
+        scope = snapshot.get("scope", "segment")
+        size = snapshot.get("file_size")
         status = snapshot.get("status", "")
         error = snapshot.get("error", "")
-        if status == "failed":
+        if scope == "session":
+            # 会话结束没有产出文件，不展示文件大小。
+            reason = error or "直播已结束"
+            self.status_label.setText(f"直播间 {room_id} 录制会话结束：{reason}")
+        elif status == "failed":
             self.status_label.setText(f"直播间 {room_id} 录制失败: {error}")
         else:
             self.status_label.setText(
-                f"直播间 {room_id} 录制结束，文件 {size} 字节"
+                f"直播间 {room_id} 录制结束，文件 {size or 0} 字节"
             )
         logger.info(
-            "房间 %s 录制结束 status=%s size=%s file=%s",
+            "房间 %s 录制结束 scope=%s status=%s size=%s file=%s",
             room_id,
+            scope,
             status,
             size,
             snapshot.get("file_path"),
