@@ -1,0 +1,85 @@
+﻿FFmpeg 共享库构建中静态链接的第三方组件 — 版权与许可声明
+
+适用对象：DouyinLiveRecorder 0.4.1 内置 FFmpeg（BtbN win64-lgpl-shared 构建，
+FFmpeg n9.0.2-61-gd59078794d，BtbN 构建提交 7f2a6b1050d302144de8366afa37a75e46f326aa）。
+
+说明：
+1. 下列组件被静态链接进 avcodec/avdevice/avfilter/avformat/avutil/swresample/swscale DLL。
+2. 每个组件的完整源码归档、精确版本与 SHA-256 见 SOURCE-MANIFEST.csv；
+   获取方式见 SOURCE-OFFER.txt。
+3. 各组件上游许可原文归档于本目录 ffmpeg-components/ 下（文件名见“上游许可文件”列）。
+4. 表中“版权”为该组件许可文件或源文件头部载明的权利人；完整版权声明以对应源码归档为准。
+5. 本表不构成法律意见。
+
+组件 | 精确版本 | 许可证 | 版权 | 上游许可文件
+--- | --- | --- | --- | ---
+AMF | git 57ee0cfb0e1a08d9041f77435653794c1b012be0 | MIT | Copyright (c) Advanced Micro Devices, Inc. | ffmpeg-components/AMF__LICENSE.txt
+aom | git aac27b8f291ed449fac576bcce0ad0ca189be851 | BSD-2-Clause + PATENTS grant | Copyright (c) 2016, Alliance for Open Media | ffmpeg-components/aom__LICENSE, ffmpeg-components/aom__PATENTS
+aribb24 | git 5e9be272f96e00f15a2f3c5f8ba7e124862aec38 | LGPL-3.0-or-later | Copyright (C) 2007 Free Software Foundation, Inc.; Copyright (c) 2014-2026 aribb24 contributors | ffmpeg-components/aribb24__aribb24-5e9be272f96e00f15a2f3c5f8ba7e124862aec38__COPYING
+cairo | git 07adef44b00a9765e9bdb92c4e6f3772debc83c2 | LGPL-2.1 OR MPL-1.1 | Copyright (c) 1999-2026 The Cairo authors | ffmpeg-components/cairo__cairo-07adef44b00a9765e9bdb92c4e6f3772debc83c2__COPYING, ffmpeg-components/cairo__cairo-07adef44b00a9765e9bdb92c4e6f3772debc83c2__perf__COPYING, ffmpeg-components/cairo__cairo-07adef44b00a9765e9bdb92c4e6f3772debc83c2__test__COPYING, ffmpeg-components/cairo__cairo-07adef44b00a9765e9bdb92c4e6f3772debc83c2__util__COPYING
+chromaprint | git 3b38c100022bdfb49be7797c4828a476f1621d55 | LGPL-2.1-or-later (own code MIT) | Copyright (c) 2010-2026 Lukáš Lalinský and contributors | ffmpeg-components/chromaprint__chromaprint-3b38c100022bdfb49be7797c4828a476f1621d55__LICENSE.md
+dav1d | git 6c7bee685677fd997a431302be4fea8ea4017606 | BSD-2-Clause | Copyright (c) 2018-2025, VideoLAN and dav1d authors | ffmpeg-components/dav1d__COPYING
+FFmpeg | n9.0.2-61-gd59078794d | LGPL-3.0-or-later | Copyright (c) 2000-2026 FFmpeg developers | ffmpeg-components/FFmpeg__FFmpeg-d59078794d__LICENSE.md
+fontconfig | git bb21be622280981392c0335fc22202fbba46d247 | MIT-style | Copyright (c) 2000-2007 Keith Packard and others | ffmpeg-components/fontconfig__COPYING
+freetype | git dbb00e529e69a2be629a9ef98498e4f9b188aab1 | FTL (FreeType License) | Copyright 1996-2002, 2006 by David Turner, Robert Wilhelm, and Werner Lemberg | ffmpeg-components/freetype__FTL.TXT, ffmpeg-components/freetype__GPLv2.TXT
+fribidi | git 15393e4937aa95bcf865d92143735746aeb654fa | LGPL-2.1-or-later | Copyright (C) 1991, 1999 Free Software Foundation, Inc.; Copyright (c) 2001-2026 Behdad Esfahbod and contributors | ffmpeg-components/fribidi__fribidi-15393e4937aa95bcf865d92143735746aeb654fa__COPYING
+glib | git 5cf924587ed152260d85c6ca8733546bcad5ee42 | LGPL-2.1-or-later | Copyright (C) 1995-2026 The GLib authors | ffmpeg-components/glib__COPYING
+gme (game-music-emu) | git 8238afd9503a59ffcec0e2685584d5ce819ad7c6 | LGPL-2.1-or-later | Copyright (C) 2003-2026 Game_Music_Emu contributors | ffmpeg-components/game__game-music-emu-8238afd9503a59ffcec0e2685584d5ce819ad7c6__license.txt
+gmp | git f9095918ead819c0a2340232891b5acac24b8085 | LGPL-3.0-or-later OR GPL-2.0-or-later | Copyright (C) 1991-2026 Free Software Foundation, Inc.; BtbN fork maintained by Timo Rothenpieler | ffmpeg-components/gmp__COPYING.LESSERv3
+harfbuzz | git 8f1a4e0634a35182e5dd04401edcf57acf5eb12e | MIT | Copyright (c) 2010-2022 Google, Inc. | ffmpeg-components/harfbuzz__COPYING
+kvazaar | git ec7562da7f5971f9fa3f984db358371e74bf3c7d | BSD-3-Clause | Copyright (c) 2021, Tampere University, ITU/ISO/IEC, project contributors | ffmpeg-components/kvazaar__LICENSE, ffmpeg-components/kvazaar__LICENSE.EXT.greatest
+lcevcdec | git e295d8438ba554bc541fb269baa9cbd567b626a8 | BSD-3-Clause-Clear | Copyright (c) V-Nova International Limited 2014-2026 | ffmpeg-components/lcevcdec__COPYING, ffmpeg-components/lcevcdec__LICENSE.md
+lcms2 | git ed288c301bd85eaabcb9e1ae0f73540c5f129e1e | MIT | Copyright (c) 2023 Marti Maria Saguer | ffmpeg-components/lcms2__LICENSE
+libaribcaption | git d59c9d6403645dd7e8098b02b887a6723b15259b | MIT | Copyright (c) 2022 magicxqq | ffmpeg-components/libaribcaption__LICENSE
+libass | git 21b5a54fceff49c126c201d4b51c6445287a5072 | ISC | Copyright (C) 2006-2016 libass contributors | ffmpeg-components/libass__COPYING
+libbluray | git 4613535451af402c6d72665e8cd88be1b29c9158 | LGPL-2.1-or-later | Copyright (C) 2009-2026 libbluray authors | ffmpeg-components/libbluray__libbluray-4613535451af402c6d72665e8cd88be1b29c9158__COPYING
+libiconv | git baaba39736e3b498e1597bf0e5e899b1f753fb01 | LGPL-2.1-or-later | Copyright (C) Free Software Foundation, Inc. | ffmpeg-components/libiconv__libiconv-baaba39736e3b498e1597bf0e5e899b1f753fb01__COPYING, ffmpeg-components/libiconv__libiconv-baaba39736e3b498e1597bf0e5e899b1f753fb01__COPYING.LIB, ffmpeg-components/libiconv__libiconv-baaba39736e3b498e1597bf0e5e899b1f753fb01__libcharset__COPYING.LIB
+libjxl | git a14f4e0ff32c07cbd19eae144c850e8bbfee2261 | BSD-3-Clause | Copyright (c) the JPEG XL Project Authors | ffmpeg-components/libjxl__LICENSE
+libmp3lame (LAME) | svn r7153 | LGPL-2.0 | Copyright (C) 2000-2026 The LAME project authors | ffmpeg-components/lame__lame-svn__COPYING, ffmpeg-components/lame__lame-svn__debian__copyright, ffmpeg-components/lame__lame-svn__LICENSE
+libopus | git f1afc4222aff7c5456d27581ec618ae64158fbe1 | BSD-3-Clause | Copyright 2001-2023 Xiph.Org, Skype Limited, Octasic, et al. | ffmpeg-components/libopus__COPYING
+libplacebo | git e608e5b799b6515af2689fddbbed66ffae7b724c | LGPL-2.1-or-later | Copyright (C) 2017-2026 Niklas Haas and libplacebo contributors | ffmpeg-components/libplacebo__libplacebo-e608e5b799b6515af2689fddbbed66ffae7b724c__demos__LICENSE, ffmpeg-components/libplacebo__libplacebo-e608e5b799b6515af2689fddbbed66ffae7b724c__LICENSE
+librist | git a911bee8904d88beb1ccd3349ff9a3de1cadc1a6 | BSD-2-Clause | Copyright (c) 2019-2020, VideoLAN and librist authors | ffmpeg-components/librist__COPYING
+librsvg | git a6ab2529560de5e17551a9ca3ed9e8a9b9bc9a2e | LGPL-2.1-or-later | Copyright (C) 2000-2026 The librsvg authors | ffmpeg-components/librsvg__librsvg-a6ab2529560de5e17551a9ca3ed9e8a9b9bc9a2e__COPYING.LIB, ffmpeg-components/librsvg__librsvg-a6ab2529560de5e17551a9ca3ed9e8a9b9bc9a2e__librsvg-rebind__LICENSE
+libssh | git 5138d46fd3b844d525b05938bf55a6d0d924c8d2 | LGPL-2.1-or-later | Copyright (C) 2003-2026 Aris Adamantiadis, Andreas Schneider and libssh contributors | ffmpeg-components/libssh__libssh-mirror-5138d46fd3b844d525b05938bf55a6d0d924c8d2__COPYING
+libtheora | git 28fd5ec77f0ad0e07a371cef1047828116f6bd8a | BSD-3-Clause | Copyright (C) 2002-2009 Xiph.org Foundation | ffmpeg-components/libtheora__COPYING, ffmpeg-components/libtheora__LICENSE
+libva | git f052e984e0c8bf10784198cc311b23c567b1367f | MIT | Copyright (c) 2007-2026 Intel Corporation | ffmpeg-components/libva__COPYING
+libvmaf | git cf677baaa039723876fff8c2677164f25102e684 | BSD-2-Clause-Patent | Copyright (c) 2020 Netflix, Inc. | ffmpeg-components/libvmaf__LICENSE
+libvorbis | git 1b75110b5a2754ba1931d82dd83cb822b266a21d | BSD-3-Clause | Copyright (c) 2002-2020 Xiph.org Foundation | ffmpeg-components/libvorbis__COPYING
+libvpx | git 7e000a41a7727d5b9477dbbe5727431560d6a16c | BSD-3-Clause | Copyright (c) 2010, The WebM Project authors | ffmpeg-components/libvpx__LICENSE
+libwebp | git 67b8354c37d21f36d6d5cdd027ca0bcf94d3243d | BSD-3-Clause | Copyright (c) 2010, Google Inc. | ffmpeg-components/libwebp__COPYING
+libxml2 | git 21c8223ac091b81d5914c52eb20b1b063e29cb92 | MIT | Copyright (C) 1998-2012 Daniel Veillard and contributors | ffmpeg-components/libxml2__Copyright
+libzmq | git 46493370217ac135246617fa2f6ac819d8b61bfc | MPL-2.0 | Copyright (c) 2007-2026 Contributors to the ZeroMQ project | ffmpeg-components/libzmq__LICENSE
+lilv | git 4b8f30055fa5cb4134a2eb45fc1555bc04289314 | ISC | Copyright 2011-2026 David Robillard | ffmpeg-components/lilv__COPYING
+lv2 (headers) | git 3c57dae600a5ad8d05acd53ee3490f7d91cb7be6 | ISC | Copyright 2006-2012 Steve Harris, David Robillard | ffmpeg-components/lv2__COPYING
+mbedtls | tag v4.3.0 | Apache-2.0 | Copyright (c) The Mbed TLS Contributors | ffmpeg-components/mbedtls__LICENSE
+oneVPL | git 412c5cffe3022d5ebb8a955c3b30afe7bd2e3929 | MIT | Copyright (c) 2020 Intel Corporation | ffmpeg-components/oneVPL__LICENSE
+openal-soft | git 0609c8df5848040a13d67d790ac65ed95fad265f | LGPL-2.0-or-later | Copyright (C) 1991 Free Software Foundation, Inc.; Copyright (c) 2005-2026 OpenAL Soft contributors | ffmpeg-components/openal__openal-soft-0609c8df5848040a13d67d790ac65ed95fad265f__COPYING, ffmpeg-components/openal__openal-soft-0609c8df5848040a13d67d790ac65ed95fad265f__fmt-11.2.0__LICENSE, ffmpeg-components/openal__openal-soft-0609c8df5848040a13d67d790ac65ed95fad265f__gsl__LICENSE
+openapv | git 3f0291391dbb1fbc27229b2543aad4ce778b0d72 | BSD-3-Clause | Copyright (c) 2022 Samsung Electronics Co., Ltd. | ffmpeg-components/openapv__LICENSE
+OpenCL-Headers | git 82f60316cc142e7b21dc1d8983b26de18858fbd9 | Apache-2.0 | Copyright (c) The Khronos Group Inc. | ffmpeg-components/OpenCL-Headers__LICENSE
+opencore-amr | git 7dba8c32238418ce0b316a852b2224df586ca896 | Apache-2.0 | Copyright (c) The opencore-amr authors | ffmpeg-components/opencore-amr__LICENSE
+openh264 | git 1bca62311e447fd9c39fc93de2c4b96cd5ce971c | BSD-2-Clause | Copyright (c) 2013, Cisco Systems | ffmpeg-components/openh264__LICENSE
+openjpeg | git 8314119b067c0fc77834731168daaebd379fdb12 | BSD-2-Clause | Copyright (c) 2002-2026, OpenJPEG contributors | ffmpeg-components/openjpeg__LICENSE
+openmpt | git ad7ba02b3fd1212e65cca02c41476af4368491ce | BSD-3-Clause | Copyright (c) 2004-2026, OpenMPT Project Developers and Contributors | ffmpeg-components/openmpt__LICENSE
+pango | git 6bd640fdbdfe4d751cc17e0fff25caa6a372d303 | LGPL-2.0-or-later | Copyright (C) 1999-2026 The Pango authors | ffmpeg-components/pango__pango-6bd640fdbdfe4d751cc17e0fff25caa6a372d303__COPYING
+rav1e | git 31435de9d76fddd38f6dcc31d4014574cebb2092 | BSD-2-Clause | Copyright (c) 2017-2023, the rav1e contributors | ffmpeg-components/rav1e__LICENSE
+SDL2 | git fe30456e94e89ef2cab50172121bffb7f7f50830 | Zlib | Copyright (C) 1997-2026 Sam Lantinga | ffmpeg-components/SDL__LICENSE.txt
+serd | git b621b0bc790d1e8102d3138ead16b974ddda8432 | ISC | Copyright 2011-2026 David Robillard | ffmpeg-components/serd__COPYING
+shaderc | git 05814952134d09f8b54ae925afe578fc341cf6c1 | Apache-2.0 | Copyright (c) The shaderc authors | ffmpeg-components/shaderc__LICENSE, ffmpeg-components/shaderc__license-checker.cfg
+snappy | git 946606459314e55d029c85f9a8c46f8809467f0f | BSD-3-Clause | Copyright 2011, Google Inc. | ffmpeg-components/snappy__COPYING, ffmpeg-components/snappy__COPYING.notestdata
+sord | git 4b5232bb91e7f2f1b84df384494d073fabbcd312 | ISC | Copyright 2011-2026 David Robillard | ffmpeg-components/sord__COPYING
+SPIRV-Cross | git 57e4efcc84112abcd426dc5ec248b5339bee04f2 | Apache-2.0 | Copyright (c) The Khronos Group Inc. | ffmpeg-components/SPIRV-Cross__LICENSE
+SPIRV-Headers | git 5c6004e758e0c80185ef2cee93ae5c10fa342a5b | MIT (Khronos) | Copyright (c) 2015-2024 The Khronos Group Inc. | ffmpeg-components/SPIRV-Headers__LICENSE
+sratom | git 9e8ee84eed502e6030ce8bb49694fd28542b08fc | ISC | Copyright 2012-2026 David Robillard | ffmpeg-components/sratom__COPYING
+srt | git 23af65f7dafb0f65b80312b859f80aeece557924 | MPL-2.0 | Copyright (c) 2015-2026, Haivision Systems Inc. | ffmpeg-components/srt__LICENSE
+SVT-AV1 | git 5fdf6b2f373bd96256bb6b45f892077b1b4431d9 | BSD-3-Clause (upstream) | Copyright (c) 2019, Alliance for Open Media | ffmpeg-components/SVT-AV1__LICENSE-BSD2.md, ffmpeg-components/SVT-AV1__LICENSE.md
+twolame | git 6fced852d4d5cfad58cf9dbe3ea619b08e87d398 | LGPL-2.1-or-later | Copyright (C) 2004-2026 The twolame authors | ffmpeg-components/twolame__twolame-6fced852d4d5cfad58cf9dbe3ea619b08e87d398__COPYING
+uavs3d | git 0e20d2c291853f196c68922a264bcd8471d75b68 | BSD-3-Clause (upstream) | Copyright (c) 2018-2022 Peking University Shenzhen Graduate School, Peng Cheng Laboratory, Guangdong Bohua UHD Innovation Corporation | ffmpeg-components/uavs3d__COPYING
+vapoursynth | tag R82 | LGPL-2.1-or-later | Copyright (c) 2012-2026 Fredrik Mellbin and VapourSynth contributors | ffmpeg-components/vapoursynth__vapoursynth-R82__COPYING.LESSER
+Vulkan-Headers | tag v1.4.368 | Apache-2.0 OR MIT | Copyright 2015-2026 The Khronos Group Inc. | ffmpeg-components/Vulkan-Headers__LICENSE.md
+Vulkan-Shim-Loader | git 65b3936528cd92eb4ea3de485d03f858a3850484 | MIT | Copyright (c) 2025 Timo Rothenpieler | ffmpeg-components/Vulkan-Shim-Loader__LICENSE
+vvenc | git 7804c92e133983e5d81c88d0ae642201d73ee457 | BSD-3-Clause | Copyright (c) 2019-2026, Fraunhofer-Gesellschaft e.V. & The VVenC Authors | ffmpeg-components/vvenc__LICENSE.txt
+xz (liblzma) | git f54febc540607b3bdee0a0e6793355df2a7e9f61 | 0BSD | Copyright (c) The XZ Utils authors | ffmpeg-components/xz__COPYING, ffmpeg-components/xz__COPYING.0BSD, ffmpeg-components/xz__COPYING.GPLv2, ffmpeg-components/xz__COPYING.GPLv3, ffmpeg-components/xz__COPYING.LGPLv2.1
+zimg | git 67e0603271c080e22c8429856dd4a8a56587e61e | WTFPL | Copyright (C) 2004 Sam Hocevar | ffmpeg-components/zimg__COPYING
+zix | git 17d632393f5addb6fa24dda2927b96515407cca7 | ISC | Copyright 2011-2022 David Robillard | ffmpeg-components/zix__COPYING
+zlib | git 99623ef7097352da7993ba614161fd6a311e046e | Zlib | Copyright (C) 1995-2024 Jean-loup Gailly and Mark Adler | ffmpeg-components/zlib__LICENSE
+

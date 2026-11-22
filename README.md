@@ -1,6 +1,6 @@
 # 抖音直播监控与录制工具（Windows 桌面版）
 
-[![Release](https://img.shields.io/badge/release-v0.4.0-blue)](https://github.com/mguoxin/DouyinLiveRecorder-Desktop/releases/latest)
+[![Release](https://img.shields.io/badge/release-v0.4.1%20candidate-orange)](https://github.com/mguoxin/DouyinLiveRecorder-Desktop/releases)
 [![Platform](https://img.shields.io/badge/platform-Windows%20x64-lightgrey)]()
 [![Python](https://img.shields.io/badge/python-3.12-blue)]()
 
@@ -9,13 +9,19 @@ FFmpeg 录制与自动续录；安装包内置 FFmpeg，解压即用。
 
 ## 下载与安装
 
-- 最新正式版：[GitHub Releases · v0.4.0](https://github.com/mguoxin/DouyinLiveRecorder-Desktop/releases/latest)
-  （下载 `DouyinLiveRecorder-0.4.0-win64.zip`，约 78 MB）。
-- 校验（可选）：下载同一 Release 页面的 `SHA256SUMS.txt`，执行
-  `certutil -hashfile DouyinLiveRecorder-0.4.0-win64.zip SHA256`，
-  结果应为
-  `FF0609D3B6D1FE380B8F6590085E5F7770FAAE469588A0692658F7CD676DE1D2`。
-- 安装：解压到任意可写目录，双击 `DouyinLiveRecorder.exe`。onedir 便携版，
+> **v0.4.0 二进制已暂停公开下载。** v0.4.0 内置的 FFmpeg 为第三方 GPLv3 静态构建，
+> 其完整对应源码与构建材料未能取得并验证，因此该 Release 已转为 Draft（附件保留，
+> 未删除、未覆盖、标签与源码未改动）。详见
+> [V0.4.0-ASSET-WITHDRAWAL-RECORD.md](docs/audit/V0.4.0-ASSET-WITHDRAWAL-RECORD.md)。
+> 仓库源码、Git 标签与历史仍可正常访问。
+>
+> **v0.4.1 尚未发布**，目前只有未公开的候选包；许可证材料与源码交付清单已完成，
+> 待最终复核。发布前请勿从其他渠道下载所谓“新版”二进制。
+
+- 正式版下载入口：<https://github.com/mguoxin/DouyinLiveRecorder-Desktop/releases>
+  （v0.4.0 暂停公开分发期间，该页面不再提供可下载的正式版二进制）。
+- 从源码运行 / 自行构建：见下文「开发与构建」。
+- 安装（得到候选包后）：解压到任意可写目录，双击 `DouyinLiveRecorder.exe`。onedir 便携版，
   无需安装 Python 或 FFmpeg，不写注册表。
 - 首次使用：侧边栏「直播间」→「添加直播间」→ 粘贴直播间链接或数字 ID → 开始监控 / 录制。
 - 系统要求：Windows 10 / 11 x64。
@@ -200,11 +206,12 @@ PyInstaller 6.22.3 已安装到项目虚拟环境，构建命令：
 
 产物：`dist\DouyinLiveRecorder\DouyinLiveRecorder.exe`（onedir，无控制台窗口）。
 
-正式发布包：`DouyinLiveRecorder-0.4.0-win64.zip`（约 78MB，解压后约 200MB），
-从 [GitHub Releases](https://github.com/mguoxin/DouyinLiveRecorder-Desktop/releases/latest) 下载。
+正式发布包（候选，未发布）：`DouyinLiveRecorder-0.4.1-candidate2-win64.zip`（约 105MB），
+发布前不提供公开下载；构建方法同上。
 包内包含程序本体、内置 FFmpeg（LGPL 共享构建）、README、`THIRD_PARTY_NOTICES.txt` 与
-`LICENSES\` 下的第三方许可全文；
-不包含开发环境、测试产物、数据库或任何用户数据。校验和见 `release\SHA256SUMS.txt`。
+`LICENSES\` 下的第三方许可全文（含 LGPL-2.0/2.1/3.0 与各组件许可原文）、
+`FFMPEG-COMPONENT-NOTICES.txt`、`SOURCE-MANIFEST.csv` 与 `FFMPEG-SOURCE-OFFER.txt`；
+不包含开发环境、测试产物、数据库或任何用户数据。校验和见 `release\v0.4.1-SHA256SUMS.txt`。
 
 已验证（2026-11-16，本开发机）：
 
