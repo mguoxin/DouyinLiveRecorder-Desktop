@@ -166,6 +166,8 @@ class RecordingService(QObject):
         self._active_lock = threading.Lock()
         self._shutdown_lock = threading.Lock()
         self._shutdown_report: Optional[RecordingShutdownReport] = None
+        # 关闭请求标记：管理线程据此停止发起新的网络解析与续录，尽快处理 shutdown。
+        self._shutdown_requested = threading.Event()
         if self._registry is not None and cleanup_orphans_on_start:
             self._cleanup_orphans()
         if recover_interrupted:
@@ -321,16 +323,26 @@ class RecordingService(QObject):
         with self._shutdown_lock:
             if self._shutdown_report is not None:
                 return self._shutdown_report
+            started = time.monotonic()
+            # 先置位再入队：管理线程在轮询中可提前放弃网络解析，缩短关闭等待。
+            self._shutdown_requested.set()
             self._queue.put(("shutdown",))
             self._thread.join(self._shutdown_timeout_s)
             exited = not self._thread.is_alive()
             with self._active_lock:
                 remaining = len(self._active)
+            elapsed = time.monotonic() - started
             if not exited:
                 logger.critical(
                     "录制管理线程未在 %.1fs 内退出，remaining_active=%s",
                     self._shutdown_timeout_s,
                     remaining,
+                )
+            else:
+                logger.info(
+                    "录制服务已停止：remaining_active=%s 耗时=%.2fs",
+                    remaining,
+                    elapsed,
                 )
             self._shutdown_report = RecordingShutdownReport(
                 thread_exited=exited, remaining_active=remaining
@@ -347,6 +359,9 @@ class RecordingService(QObject):
                 try:
                     command = self._queue.get(timeout=self._poll_interval_s)
                 except queue.Empty:
+                    if self._shutdown_requested.is_set():
+                        # 关闭已请求：不再轮询，立即回到队列处理 shutdown 命令。
+                        continue
                     try:
                         self._poll_active()
                     except Exception:  # noqa: BLE001 - 轮询异常不得终止管理线程
@@ -499,6 +514,12 @@ class RecordingService(QObject):
         now = time.monotonic()
         low_space = self._disk_below_threshold()
         for active in actives:
+            if self._shutdown_requested.is_set():
+                # 关闭已请求：放弃后续房间的网络解析与续录，交由 shutdown 停止进程。
+                logger.info(
+                    "关闭已请求，停止后续续录处理 remaining=%s", len(actives)
+                )
+                break
             if active.process is None:
                 self._poll_reconnect(active, now)
                 continue
@@ -715,6 +736,8 @@ class RecordingService(QObject):
 
     def _resolve_stream(self, active: _ActiveRecording) -> StreamRefresh:
         assert self._stream_resolver is not None
+        if self._shutdown_requested.is_set():
+            return StreamRefresh(live=None, error="正在退出，跳过续录解析")
         try:
             return self._stream_resolver(active.web_rid)
         except Exception as e:  # noqa: BLE001 - 解析异常按一次失败尝试处理
@@ -954,10 +977,20 @@ class RecordingService(QObject):
     def _stop_all(self) -> None:
         with self._active_lock:
             actives = list(self._active.values())
+        if not actives:
+            return
+        started = time.monotonic()
+        logger.info("开始停止全部录制 room_count=%s", len(actives))
         for active in actives:
+            room_started = time.monotonic()
             if active.process is None:
                 # 关闭时取消等待中的续录，不伪造新的录制分段。
                 self._drop_active(active)
+                logger.info(
+                    "已取消等待续录 room_id=%s 耗时=%.2fs",
+                    active.room_id,
+                    time.monotonic() - room_started,
+                )
                 continue
             report = active.process.stop()
             self._finalize(
@@ -966,6 +999,21 @@ class RecordingService(QObject):
                 requested=True,
                 error=self._unconfirmed_exit_error(report),
             )
+            logger.info(
+                "停止录制完成 room_id=%s graceful=%s terminated=%s killed=%s "
+                "exited=%s 耗时=%.2fs",
+                active.room_id,
+                report.graceful,
+                report.terminated,
+                report.killed,
+                report.exited,
+                time.monotonic() - room_started,
+            )
+        logger.info(
+            "全部录制已停止 room_count=%s 耗时=%.2fs",
+            len(actives),
+            time.monotonic() - started,
+        )
 
     def _allocate_output_path(self, web_rid: str, display_name: str) -> Path:
         stamp = datetime.now().strftime("%Y%m%d_%H%M%S")

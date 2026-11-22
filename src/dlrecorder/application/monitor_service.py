@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 import sqlite3
+import time
 from typing import Optional
 
 from PySide6.QtCore import QObject, Signal
@@ -46,6 +47,7 @@ class MonitorService(QObject):
         self._parser = parser
         self._interval = monitor_interval_s
         self._rooms: dict[int, Room] = {}
+        self._shutdown_report: Optional[WorkerShutdownReport] = None
         self._worker = MonitorWorker(self)
         # 连接核心信号转发
         self._worker.room_state_updated.connect(self.room_state_updated)
@@ -186,11 +188,19 @@ class MonitorService(QObject):
         后台线程仍存活时关闭连接会让其写入失效，因此这种情况下保留连接并输出
         critical 日志，由进程终止回收。
         """
+        started = time.monotonic()
+        if self._shutdown_report is not None:
+            return self._shutdown_report
         for room_id in list(self._rooms.keys()):
             self._worker.stop_monitor(room_id)
+        logger.info("已请求停止全部监控 room_count=%s", len(self._rooms))
         report = self._worker.shutdown()
+        self._shutdown_report = report
         if report.worker_exited:
             self._db.close()
+            logger.info(
+                "监控服务已停止并关闭数据库 耗时=%.2fs", time.monotonic() - started
+            )
         else:
             logger.critical(
                 "工作线程未在超时内退出，保留数据库连接："

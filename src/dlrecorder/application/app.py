@@ -8,6 +8,7 @@ import http.cookiejar
 import logging
 import os
 import sys
+import time
 import urllib.request
 from pathlib import Path
 from typing import Any, Callable, Optional
@@ -277,6 +278,7 @@ class Application:
         if self._shutdown_done:
             return
         self._shutdown_done = True
+        started = time.monotonic()
         logger.info("应用关闭中...")
         # 录制进程先停，避免数据库关闭后仍有录制线程写入。
         report = self.recording.shutdown()
@@ -284,8 +286,16 @@ class Application:
             logger.critical(
                 "录制服务未完全退出，remaining_active=%s", report.remaining_active
             )
+        logger.info("录制服务阶段完成 耗时=%.2fs", time.monotonic() - started)
+        stage = time.monotonic()
         self.service.shutdown()
+        logger.info(
+            "监控服务阶段完成 耗时=%.2fs 总耗时=%.2fs",
+            time.monotonic() - stage,
+            time.monotonic() - started,
+        )
         self._dispose_main_window()
+        logger.info("应用清理完成 总耗时=%.2fs", time.monotonic() - started)
 
     def _dispose_main_window(self) -> None:
         """解除日志桥接并销毁窗口，避免跨测试/重启残留的 Qt 对象。"""

@@ -83,6 +83,18 @@ def test_worker_start_stop(qt_app):
     assert worker.loop is None
 
 
+def test_is_running_returns_false_once_shutdown_requested(qt_app):
+    worker = MonitorWorker()
+    worker.start()
+    time.sleep(0.2)
+    assert worker.is_running(1) is False  # 无该房间任务
+    worker._shutdown_event.set()
+    # 关闭已请求时不再向事件循环排队，直接返回 False（避免 UI 线程超时抛异常）。
+    assert worker.is_running(1) is False
+    worker.shutdown()
+    assert worker.is_running(1) is False
+
+
 def test_monitor_task_runs_and_stops(qt_app):
     worker = MonitorWorker()
     worker.start()

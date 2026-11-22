@@ -333,12 +333,27 @@ class MonitorWorker(QThread):
             self._http.cancel_token(current.active_token)
 
     def is_running(self, room_id: int) -> bool:
-        if not self._loop_ready.is_set() or self._loop is None:
+        if (
+            not self._loop_ready.is_set()
+            or self._loop is None
+            or self._shutdown_event.is_set()
+        ):
+            # 关闭已开始：事件循环正在收尾，不再发起查询，避免 UI 线程等待超时。
             return False
         future = asyncio.run_coroutine_threadsafe(
             self._is_running(room_id), self._loop
         )
-        return future.result(timeout=5.0)
+        try:
+            return future.result(timeout=5.0)
+        except TimeoutError:
+            # 循环无响应或正在退出：按“未运行”处理，避免异常冒泡到 Qt 槽。
+            logger.warning(
+                "监控线程 5s 内未响应状态查询，按未运行处理 room_id=%s", room_id
+            )
+            return False
+        except Exception:  # noqa: BLE001 - 循环已关闭等情况
+            logger.debug("查询监控状态失败 room_id=%s", room_id, exc_info=True)
+            return False
 
     def current_session_id(self, room_id: int) -> Optional[int]:
         """返回房间当前监控任务绑定的 Session ID（只读快照，线程安全）。

@@ -673,3 +673,35 @@ def test_unconfirmed_process_exit_is_not_marked_completed(env, qt_app, monkeypat
     assert finished[0]["status"] == "failed"
     assert "未能确认退出" in finished[0]["error"]
     assert env.db.get_recording(finished[0]["recording_id"])["status"] == "failed"
+
+
+def test_shutdown_skips_further_resume_resolution(env, qt_app):
+    """关闭请求后管理线程必须放弃后续续录解析，尽快处理 shutdown。"""
+    calls: list[str] = []
+
+    def resolver(web_rid: str) -> StreamRefresh:
+        calls.append(web_rid)
+        time.sleep(0.2)
+        return StreamRefresh(live=None, error="网络请求失败")
+
+    service = env.service(
+        "flaky:99",
+        stream_resolver=resolver,
+        reconnect_delays_s=(0.5,),
+        poll_interval_s=0.02,
+        shutdown_timeout_s=10.0,
+    )
+    started: list[dict] = []
+    service.recording_started.connect(lambda rid, snap: started.append(snap))
+    service.start_recording(env.room_id, "https://example.invalid/live.flv")
+    _wait_for(qt_app, lambda: bool(started))
+    _wait_for(qt_app, lambda: bool(calls), timeout=10)
+
+    began = time.monotonic()
+    report = service.shutdown()
+    elapsed = time.monotonic() - began
+
+    assert report.thread_exited is True
+    assert elapsed < 3.0
+    # 关闭置位后不再发起第二次解析；只保留关闭前已在执行的那一次。
+    assert len(calls) == 1

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import threading
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Callable, Optional
@@ -768,6 +769,13 @@ class MainWindow(QMainWindow):
         super().changeEvent(event)
 
     def closeEvent(self, event) -> None:  # type: ignore[override]
+        logger.info(
+            "收到关闭请求：已完成=%s 已开始=%s 可见=%s 最小化=%s",
+            self._shutdown_complete,
+            self._shutdown_started,
+            self.isVisible(),
+            self.isMinimized(),
+        )
         if self._shutdown_complete:
             event.accept()
             return
@@ -780,6 +788,11 @@ class MainWindow(QMainWindow):
             active = self._recording.active_rooms()
         except Exception:  # noqa: BLE001
             logger.debug("读取活动录制失败", exc_info=True)
+        if active and not self.isVisible():
+            # 确认框以主窗口为父：窗口隐藏（例如最小化到托盘）时先恢复，
+            # 否则对话框可能出现在屏幕外，用户看不到也无法确认退出。
+            logger.info("关闭前恢复隐藏的主窗口，以便显示退出确认")
+            self._restore_window()
         if active and not ask_confirm(
             self,
             "退出前停止录制",
@@ -809,25 +822,50 @@ class MainWindow(QMainWindow):
             daemon=True,
         )
         self._shutdown_thread.start()
+        logger.info("关闭收尾线程已启动")
+        # 关闭没有硬性上限：超过 30 秒时只提示与记录，不强行终止数据库或录制进程。
+        QTimer.singleShot(30_000, self._on_shutdown_slow)
+
+    def _on_shutdown_slow(self) -> None:
+        """关闭收尾超过 30 秒时的可观测提示（不强制中断后台清理）。"""
+        if self._shutdown_complete:
+            return
+        thread = self._shutdown_thread
+        logger.warning(
+            "关闭收尾超过 30 秒仍在进行（线程存活=%s），继续等待",
+            bool(thread is not None and thread.is_alive()),
+        )
+        self.status_label.setText("仍在停止录制与监控，请稍候…")
+        QTimer.singleShot(30_000, self._on_shutdown_slow)
 
     def _shutdown_worker(self) -> None:
         """在后台线程停止录制与监控；结果经 QueuedConnection 回到主线程。"""
+        started = time.monotonic()
         ok = True
+        logger.info("关闭收尾开始")
         try:
             self._recording.shutdown()
         except Exception:  # noqa: BLE001 - 退出路径必须继续清理
             logger.exception("停止录制服务失败")
             ok = False
+        logger.info("停止录制服务完成 耗时=%.2fs", time.monotonic() - started)
+        stage = time.monotonic()
         try:
             self._service.shutdown()
         except Exception:  # noqa: BLE001
             logger.exception("停止监控服务失败")
             ok = False
+        logger.info(
+            "停止监控服务完成 耗时=%.2fs 总耗时=%.2fs",
+            time.monotonic() - stage,
+            time.monotonic() - started,
+        )
         self.shutdown_finished.emit(ok)
 
     def _on_shutdown_finished(self, ok: bool) -> None:
         self._shutdown_ok = ok
         self._shutdown_complete = True
+        logger.info("关闭收尾完成 ok=%s", ok)
         central = self.centralWidget()
         if central is not None:
             central.setEnabled(True)

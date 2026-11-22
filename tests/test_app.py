@@ -732,6 +732,61 @@ def test_close_is_async_and_eventually_stops_services(
         application.shutdown()
 
 
+def test_close_restores_hidden_window_before_confirm(tmp_path, qt_app, monkeypatch):
+    """窗口隐藏（如最小化到托盘）时关闭，必须先恢复窗口再弹出退出确认。"""
+    seed = Database(tmp_path / "data" / "app.db")
+    room_id = seed.add_room("close-hidden", "隐藏窗口关闭")
+    seed.close()
+
+    stub = tmp_path / "stub.py"
+    stub.write_text(RECORD_STUB, encoding="utf-8")
+
+    def builder(ffmpeg_path, stream_url, output_path):
+        return [sys.executable, str(stub), str(output_path), "stdin"]
+
+    application = Application(
+        base_dir=tmp_path,
+        recording_options={
+            "command_builder": builder,
+            "poll_interval_s": 0.05,
+            "stall_timeout_s": 0,
+            "stop_grace_s": 1.0,
+        },
+    )
+    started: list[dict] = []
+    application.recording.recording_started.connect(
+        lambda rid, snap: started.append(snap)
+    )
+    try:
+        application.recording.start_recording(
+            room_id, "https://example.invalid/live.flv"
+        )
+        _wait_for(lambda: bool(started))
+
+        from dlrecorder.presentation import main_window as main_window_module
+
+        seen: dict[str, bool] = {}
+
+        def fake_confirm(parent, *args, **kwargs):
+            seen["visible"] = parent.isVisible()
+            return False
+
+        monkeypatch.setattr(main_window_module, "ask_confirm", fake_confirm)
+
+        window = application.main_window
+        window.showNormal()
+        window.hide()
+        assert window.isVisible() is False
+
+        window.close()
+
+        assert seen["visible"] is True
+        assert window.isVisible() is True
+        assert window._shutdown_started is False
+    finally:
+        application.shutdown()
+
+
 def test_room_removal_stops_recording_and_keeps_history(tmp_path, qt_app):
     seed = Database(tmp_path / "data" / "app.db")
     room_id = seed.add_room("remove-rec", "待删除录制")
