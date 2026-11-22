@@ -141,6 +141,9 @@ def _env() -> dict:
     env["PYTHONPATH"] = str(SRC_DIR) + (os.pathsep + existing if existing else "")
     env["PYTHONDONTWRITEBYTECODE"] = "1"
     env["QT_QPA_PLATFORM"] = "offscreen"
+    # 子进程会输出中文提示；固定 UTF-8，避免在非中文代码页（如 CI 的 cp1252）下
+    # print 抛 UnicodeEncodeError。父进程读取时同样按 UTF-8 解码。
+    env["PYTHONIOENCODING"] = "utf-8"
     return env
 
 
@@ -211,6 +214,7 @@ def _start_holder(tmp_path: Path, mutex_name: str) -> _Holder:
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
+        encoding="utf-8",
     )
     holder = _Holder(proc, stop)
     if not _wait_until(ready.exists):
@@ -227,6 +231,7 @@ def _run_second_instance(tmp_path: Path, mutex_name: str) -> subprocess.Complete
         env=_env(),
         capture_output=True,
         text=True,
+        encoding="utf-8",
         timeout=120,
     )
 
@@ -239,6 +244,7 @@ def _run_probe(tmp_path: Path, mutex_name: str) -> subprocess.CompletedProcess:
         env=_env(),
         capture_output=True,
         text=True,
+        encoding="utf-8",
         timeout=60,
     )
 
@@ -272,6 +278,7 @@ def _start_linger(tmp_path: Path, mutex_name: str) -> _LingerHolder:
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
+        encoding="utf-8",
     )
     holder = _LingerHolder(proc, finish)
     if not _wait_until(ready.exists):
