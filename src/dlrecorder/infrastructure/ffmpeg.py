@@ -20,7 +20,7 @@ import time
 from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional, Sequence
+from typing import Any, Optional, Sequence
 
 from .winproc import KillOnCloseJob
 
@@ -62,31 +62,62 @@ class _DiagnosticsLog:
         self._path = Path(path)
         self._max_bytes = max(1024, int(max_bytes))
         self._lock = threading.Lock()
+        # 进程内保持单一文件句柄：逐行 open/close 在 Windows 上会被安全软件放大，
+        # 实测 3.8MB stderr 需要 35 秒，足以反压 FFmpeg。改为常开句柄 + 每次写入
+        # flush，既保证及时落盘，又把排空速度拉回毫秒级。
+        self._handle: Optional[Any] = None
+        self._written = 0
 
     @property
     def path(self) -> Path:
         return self._path
 
+    def _open(self) -> None:
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+        self._handle = self._path.open("ab")
+        try:
+            self._written = self._path.stat().st_size
+        except OSError:
+            self._written = 0
+
+    def _close_handle(self) -> None:
+        handle, self._handle = self._handle, None
+        if handle is not None:
+            try:
+                handle.close()
+            except OSError:
+                pass
+        self._written = 0
+
     def write(self, text: str) -> None:
         data = text.encode("utf-8", "replace")
         with self._lock:
             try:
-                self._path.parent.mkdir(parents=True, exist_ok=True)
-                if (
-                    self._path.exists()
-                    and self._path.stat().st_size + len(data) > self._max_bytes
-                ):
+                if self._handle is None:
+                    self._open()
+                if self._written + len(data) > self._max_bytes and self._written > 0:
+                    self._close_handle()
                     rotated = self._path.with_name(self._path.name + ".1")
                     try:
                         rotated.unlink()
                     except FileNotFoundError:
                         pass
                     self._path.replace(rotated)
-                with self._path.open("ab") as handle:
-                    handle.write(data)
+                    self._open()
+                if self._handle is None:
+                    return
+                self._handle.write(data)
+                self._handle.flush()
+                self._written += len(data)
             except OSError:
                 # 诊断落盘失败不得影响录制。
+                self._close_handle()
                 logger.debug("写入 FFmpeg 诊断日志失败: %s", self._path, exc_info=True)
+
+    def close(self) -> None:
+        """关闭文件句柄；下次写入时按需重新打开。"""
+        with self._lock:
+            self._close_handle()
 
 
 _DIAGNOSTICS_LOGS: dict[str, _DiagnosticsLog] = {}
@@ -469,3 +500,6 @@ class FFmpegProcess:
                 self._proc.stderr.close()
             except (OSError, ValueError):
                 pass
+        if self._diagnostics is not None:
+            # 释放常开日志句柄，避免 Windows 上阻止临时目录清理。
+            self._diagnostics.close()
