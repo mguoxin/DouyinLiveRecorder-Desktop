@@ -24,8 +24,8 @@ DouyinLiveRecorder 0.4.1 — FFmpeg 对应源码与构建材料获取说明（�
    逐文件校验：同目录 MANIFEST.sha256
 
 3. 组件版权与许可声明
-   - LICENSES/FFMPEG-COMPONENT-NOTICES.txt（69 个实际链接组件）
-   - LICENSES/ffmpeg-components/（92 份上游许可原文）
+   - LICENSES/FFMPEG-COMPONENT-NOTICES.txt（70 个实际链接组件）
+   - LICENSES/ffmpeg-components/（94 份上游许可原文）
 
 4. 许可全文
    - LGPL-2.0、LGPL-2.1、LGPL-3.0，以及 MIT、BSD-2-Clause、BSD-3-Clause、
