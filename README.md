@@ -1,14 +1,55 @@
 # 抖音直播监控与录制工具（Windows 桌面版）
 
-基于 Python 3.12 + PySide6 Widgets + SQLite 的轻量级 Windows 桌面应用。
+[![Release](https://img.shields.io/badge/release-v0.4.0-blue)](https://github.com/mguoxin/DouyinLiveRecorder-Desktop/releases/latest)
+[![Platform](https://img.shields.io/badge/platform-Windows%20x64-lightgrey)]()
+[![Python](https://img.shields.io/badge/python-3.12-blue)]()
 
-当前版本：**0.4.0**。正式发布包：
-`release\DouyinLiveRecorder-0.4.0-win64.zip`，解压后直接运行 `DouyinLiveRecorder.exe`
-（onedir 便携版，内置 FFmpeg）。0.4.0 为 GUI 现代化与图标/版本资源收尾版本（见
-[docs/RELEASE_0.4.0.md](docs/RELEASE_0.4.0.md)），0.3.1 为链接解析修复版本（见
-[docs/FIX_0.3.1_URL_PARSING.md](docs/FIX_0.3.1_URL_PARSING.md)），0.3.0 交付与测试说明见
-[DELIVERY_0.3.0.md](docs/DELIVERY_0.3.0.md)，0.2.0 见 [DELIVERY_0.2.0.md](docs/DELIVERY_0.2.0.md)，
-更早版本见 `docs/RELEASE_REPORT_0.1.*.md`。
+Windows 10 / 11 桌面端抖音直播监控与录制工具：图形界面管理直播间、多房间并发监控、
+FFmpeg 录制与自动续录；安装包内置 FFmpeg，解压即用。
+
+## 下载与安装
+
+- 最新正式版：[GitHub Releases · v0.4.0](https://github.com/mguoxin/DouyinLiveRecorder-Desktop/releases/latest)
+  （下载 `DouyinLiveRecorder-0.4.0-win64.zip`，约 78 MB）。
+- 校验（可选）：下载同一 Release 页面的 `SHA256SUMS.txt`，执行
+  `certutil -hashfile DouyinLiveRecorder-0.4.0-win64.zip SHA256`，
+  结果应为
+  `FF0609D3B6D1FE380B8F6590085E5F7770FAAE469588A0692658F7CD676DE1D2`。
+- 安装：解压到任意可写目录，双击 `DouyinLiveRecorder.exe`。onedir 便携版，
+  无需安装 Python 或 FFmpeg，不写注册表。
+- 首次使用：侧边栏「直播间」→「添加直播间」→ 粘贴直播间链接或数字 ID → 开始监控 / 录制。
+- 系统要求：Windows 10 / 11 x64。
+
+## 界面截图
+
+浅色主题主界面：
+
+![浅色主题主界面](docs/screenshots/release-0.4.0/02-main-light.png)
+
+深色主题主界面：
+
+![深色主题主界面](docs/screenshots/release-0.4.0/05-main-dark.png)
+
+最小化后驻留系统托盘：
+
+![系统托盘](docs/screenshots/release-0.4.0/03-taskbar-tray.png)
+
+## 已知问题
+
+- **P2-01（仅影响显示）**：直播自然结束、自动续录重试耗尽，或在等待续录期间手动停止时，
+  状态栏与运行日志可能显示「录制结束 status=completed size=0」。该事件描述的是**整场会话结束**，
+  并不代表文件丢失；录制文件、录制历史（数据库）与进程清理均正确。修复计划见 v0.4.1。
+- 解析主链路依赖抖音公开接口与签名规则，接口变化时需要同步上游引擎；旧页面解析回退链路仍可独立工作。
+- 低配机器（i3 / 4GB）真机验收尚未执行，目前只有 2 核亲和性限制下的模拟基准结果。
+- 退出时窗口可能短暂无响应：正在按 q → terminate → kill 顺序停止 FFmpeg，属正常收尾。
+
+## 文档
+
+- [0.4.0 发布说明](docs/RELEASE_0.4.0.md) · [项目状态](docs/PROJECT_STATUS.md)
+- [第三方组件与许可说明](THIRD_PARTY_NOTICES.txt)
+- 版本沿革：0.3.1 链接解析修复见 [docs/FIX_0.3.1_URL_PARSING.md](docs/FIX_0.3.1_URL_PARSING.md)，
+  0.3.0 见 [DELIVERY_0.3.0.md](docs/DELIVERY_0.3.0.md)，0.2.0 见
+  [DELIVERY_0.2.0.md](docs/DELIVERY_0.2.0.md)，更早版本见 `docs/RELEASE_REPORT_0.1.*.md`。
 
 ## 当前实现状态
 
@@ -74,10 +115,11 @@
 - 恢复前会自动把当前数据库复制到 `data/backups/pre-restore-*.db`，失败时保留当前数据库。
 - 备份与恢复均不删除录制文件。
 
-## 运行
+## 运行（源码方式）
 
 ```powershell
 # 安装依赖（已提供 .venv 时可直接使用）
+.venv\Scripts\python.exe -m pip install -e .[test]
 .venv\Scripts\python.exe -m dlrecorder
 ```
 
@@ -158,7 +200,8 @@ PyInstaller 6.22.3 已安装到项目虚拟环境，构建命令：
 
 产物：`dist\DouyinLiveRecorder\DouyinLiveRecorder.exe`（onedir，无控制台窗口）。
 
-正式发布包：`release\DouyinLiveRecorder-0.1.1-win64.zip`（约 75MB，解压后约 199MB）。
+正式发布包：`DouyinLiveRecorder-0.4.0-win64.zip`（约 78MB，解压后约 200MB），
+从 [GitHub Releases](https://github.com/mguoxin/DouyinLiveRecorder-Desktop/releases/latest) 下载。
 包内包含程序本体、内置 FFmpeg、README、`THIRD_PARTY_NOTICES.txt` 与 FFmpeg 许可文件；
 不包含开发环境、测试产物、数据库或任何用户数据。校验和见 `release\SHA256SUMS.txt`。
 
