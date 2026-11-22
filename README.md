@@ -147,7 +147,7 @@ FFmpeg 录制与自动续录；安装包内置 FFmpeg，解压即用。
 .venv\Scripts\python.exe -m pytest -q
 ```
 
-当前回归：**276 passed**。测试默认 `DLR_PARSER=mock`，不发起真实抖音请求；
+当前回归：**284 passed**。测试默认 `DLR_PARSER=mock`，不发起真实抖音请求；
 其中真实 FFmpeg 测试使用项目内置 FFmpeg 与本地生成媒体/本地限速 HTTP 流。
 
 0.3.0 新增回归：进程登记表与归属核验（14 项）、Job Object 关闭即终止子进程、
@@ -202,7 +202,8 @@ PyInstaller 6.22.3 已安装到项目虚拟环境，构建命令：
 
 正式发布包：`DouyinLiveRecorder-0.4.0-win64.zip`（约 78MB，解压后约 200MB），
 从 [GitHub Releases](https://github.com/mguoxin/DouyinLiveRecorder-Desktop/releases/latest) 下载。
-包内包含程序本体、内置 FFmpeg、README、`THIRD_PARTY_NOTICES.txt` 与 FFmpeg 许可文件；
+包内包含程序本体、内置 FFmpeg（LGPL 共享构建）、README、`THIRD_PARTY_NOTICES.txt` 与
+`LICENSES\` 下的第三方许可全文；
 不包含开发环境、测试产物、数据库或任何用户数据。校验和见 `release\SHA256SUMS.txt`。
 
 已验证（2026-11-16，本开发机）：
@@ -295,7 +296,9 @@ PyInstaller 6.22.3 已安装到项目虚拟环境，构建命令：
 ## 许可
 
 - 本项目源码以 [MIT License](LICENSE) 发布。
-- 安装包内含 FFmpeg（GPLv3 构建）、PySide6 / Qt（LGPLv3）等第三方组件，
+- 安装包内含 FFmpeg（LGPL 共享库构建，可替换）、PySide6 / Qt（LGPLv3）等第三方组件，
   其许可文本、构建说明与源码地址见 [THIRD_PARTY_NOTICES.txt](THIRD_PARTY_NOTICES.txt)；
-  FFmpeg 的 GPLv3 许可全文随包位于 `ffmpeg\LICENSE`。
-- 抖音解析链路的移植代码遵循上游 MIT 许可，版权声明保留在对应源文件中。
+  FFmpeg 的 LGPLv3 许可全文随包位于 `ffmpeg\LICENSE`，其余第三方许可全文随包位于 `LICENSES\`。
+- FFmpeg 采用 BtbN 的 LGPL 共享构建（ffmpeg.exe + 独立 DLL），未修改、动态链接、可被用户替换，
+  版本、来源、校验和与完整编译配置见 [tools/ffmpeg/README.txt](tools/ffmpeg/README.txt)。
+- 抖音解析链路的移植代码遵循上游 MIT 许可，版权声明保留在对应源文件中，本项目 MIT 许可不覆盖原作者版权。

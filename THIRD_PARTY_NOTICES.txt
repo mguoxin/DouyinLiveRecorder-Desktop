@@ -1,54 +1,89 @@
 DouyinLiveRecorder-Desktop 第三方组件与许可说明
 
-本程序（DouyinLiveRecorder-Desktop 0.4.1）以 Windows onedir 形式分发，随包包含或运行时
-使用以下第三方组件。各组件的版权与许可归其各自权利人所有。
+本程序（DouyinLiveRecorder-Desktop 0.4.1）以 Windows onedir 形式分发。
+随包包含或运行时使用以下第三方组件。各组件的版权与许可归其各自权利人所有。
 
-本项目自身源码以 MIT License 发布，全文见仓库根目录 LICENSE。该许可仅覆盖本项目
-原创代码；下列第三方组件仍分别适用其各自许可，MIT 许可不能替代或削弱这些义务。
+本项目自身源码以 MIT License 发布，全文见包内 LICENSE（仓库根目录同名文件）。
+该许可仅覆盖本项目原创代码；下列第三方组件仍分别适用其各自许可，MIT 许可不能
+替代、削减或豁免这些义务。
+
+完整许可文本位于包内 LICENSES\ 目录（同时存在于 _internal\LICENSES\）：
+  LGPL-3.0.txt              GNU Lesser General Public License v3
+  PSF-2.0.txt               Python 软件基金会许可
+  MPL-2.0-certifi.txt       certifi / Mozilla Public License 2.0
+  BSD-3-Clause-httpx.txt    httpx（BSD-3-Clause）
+  BSD-3-Clause-httpcore.txt httpcore（BSD-3-Clause）
+  BSD-3-Clause-idna.txt     idna（BSD-3-Clause）
+  MIT-h11.txt / MIT-h2.txt / MIT-hpack.txt / MIT-hyperframe.txt / MIT-anyio.txt
+  PyInstaller-COPYING.txt   PyInstaller（GPL-2.0 附 bootloader 例外）
+  FFmpeg 的许可与构建说明见 ffmpeg\LICENSE 与 ffmpeg\README.txt
 
 1. Python 运行时
-   - 组件：Python 3.12
-   - 许可：Python Software Foundation License
-   - 说明：程序由 PyInstaller 打包，运行时库位于 _internal\ 目录。
+   - 组件：Python 3.12（含标准库，如 urllib、sqlite3、asyncio、logging、subprocess）
+   - 许可：Python Software Foundation License 2.0
+   - 许可文本：LICENSES\PSF-2.0.txt
    - 来源：https://www.python.org/
 
-2. PySide6 / Qt 6
-   - 组件：PySide6、Qt 6（GUI 框架）
-   - 许可：LGPLv3（Qt 以动态链接方式随程序分发，_internal\ 下的 DLL 可被替换）
+2. PySide6 / Qt 6 / shiboken6
+   - 组件：PySide6-Essentials 6.12.0、shiboken6 6.12.0、Qt 6 运行库
+   - 许可：GNU Lesser General Public License v3（LGPL-3.0-only）
+   - 许可文本：LICENSES\LGPL-3.0.txt
    - 来源：https://www.qt.io/qt-6/lgpl  /  https://pypi.org/project/PySide6/
-   - 许可文本：https://www.gnu.org/licenses/lgpl-3.0.html
-   - 合规说明：本程序未修改 Qt/PySide6，仅以动态链接方式使用；用户可自行替换
-     _internal\ 下对应的 Qt DLL。分发时保留本声明与许可指引。
+   - 合规说明：本程序未修改 Qt/PySide6/shiboken6，仅以动态链接方式使用；
+     相关 DLL 位于 _internal\ 下，用户可直接以自行编译的同版本库替换，
+     无需修改或重新链接本程序。分发时保留本声明与许可全文。
 
 3. FFmpeg
-   - 组件：FFmpeg 9.0.2（gyan.dev essentials build，GPL v3 构建）
-   - 许可：GPL v3
-   - 随包位置：_internal\ffmpeg\bin\ffmpeg.exe
-   - 许可文本：_internal\ffmpeg\LICENSE
-   - 构建说明：_internal\ffmpeg\README.txt
-   - 对应源码：https://github.com/FFmpeg/FFmpeg/commit/946fcce07b
-   - 来源：https://www.gyan.dev/ffmpeg/builds/
-   - 合规说明：本程序通过独立子进程调用 FFmpeg，不修改 FFmpeg 源码，也不将其静态
-     链接进本程序。分发 FFmpeg 二进制时随附其 GPLv3 许可全文、构建说明与对应源码
-     获取地址；若修改 FFmpeg，须按 GPLv3 提供修改后的完整源码。
+   - 组件：FFmpeg n9.0.2-61-gd59078794d（BtbN win64 LGPL 共享库构建）
+   - 许可：GNU Lesser General Public License v3.0 或更高版本
+   - 随包位置：ffmpeg\bin\ffmpeg.exe 及 avcodec/avdevice/avfilter/avformat/
+     avutil/swresample/swscale 的 DLL
+   - 许可文本：ffmpeg\LICENSE（LGPLv3 全文）
+   - 构建说明、SHA-256、编译配置、源码地址：ffmpeg\README.txt
+   - 来源：https://github.com/BtbN/FFmpeg-Builds
+   - 合规说明：本程序通过独立子进程调用 FFmpeg，不修改源码，也不把 FFmpeg
+     静态链接进本程序；FFmpeg 的库以独立 DLL 分发且可被替换。
+     该构建未启用 GPL（未包含 libx264/libx265/libxvid）。
+     对应源码：https://github.com/FFmpeg/FFmpeg/tree/d59078794d
+     构建脚本：https://github.com/BtbN/FFmpeg-Builds
+     DLL 内静态包含的第三方库清单与许可说明见 ffmpeg\README.txt。
 
 4. SQLite
    - 组件：SQLite（通过 Python 标准库 sqlite3 使用）
    - 许可：Public Domain
    - 来源：https://www.sqlite.org/
 
-5. 其他 Python 标准库
-   - 许可：Python Software Foundation License
-   - 说明：urllib、asyncio、logging、subprocess 等均随 Python 分发。
+5. HTTP 客户端依赖
+   - httpx 0.28.1（BSD-3-Clause）
+   - httpcore 1.0.9（BSD-3-Clause）
+   - h11 0.16.0（MIT）
+   - h2 4.4.1（MIT）
+   - hpack 4.2.0（MIT）
+   - hyperframe 6.1.0（MIT）
+   - anyio 4.16.0（MIT）
+   - idna 3.20（BSD-3-Clause）
+   - certifi 2026.10.23（Mozilla Public License 2.0）
+   - 用途：抖音接口请求（HTTP/2、超时、连接管理与 CA 根证书）
+   - 许可文本：见 LICENSES\ 下对应文件
+   - 来源：https://github.com/encode/httpx  /  https://github.com/python-hyper/h2
+           https://github.com/certifi/python-certifi
 
-6. 抖音解析引擎代码（源码移植）
+6. PyInstaller 引导程序
+   - 组件：PyInstaller 6.22.3 bootloader
+   - 许可：GNU GPL v2.0，附 bootloader 例外条款（允许打包非 GPL 程序）
+   - 许可文本：LICENSES\PyInstaller-COPYING.txt
+   - 来源：https://pyinstaller.org/
+
+7. 抖音解析引擎代码（源码移植）
    - 组件：ihmily/DouyinLiveRecorder v4.0.7 的抖音解析实现
      （a_bogus 签名、webcast room web enter 接口、流地址选择、FFmpeg 参数组合）
    - 许可：MIT License，Copyright (c) 2025 Hmily
    - 来源：https://github.com/ihmily/DouyinLiveRecorder
    - 说明：本项目移植其抖音链路（src/dlrecorder/douyin/engine/），去掉多平台代码，
      并适配本项目的解析器接口与日志/错误分类；未修改签名算法本身。
-   - MIT 许可全文：
+     上游版权声明与许可全文如下，保留不作修改：
+     MIT License
+     Copyright (c) 2025 Hmily
      Permission is hereby granted, free of charge, to any person obtaining a copy
      of this software and associated documentation files (the "Software"), to deal
      in the Software without restriction, including without limitation the rights
@@ -65,10 +100,5 @@ DouyinLiveRecorder-Desktop 第三方组件与许可说明
      OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
      THE SOFTWARE.
 
-7. HTTP 客户端（httpx / h2 / httpcore）
-   - 组件：httpx（BSD-3-Clause）、httpcore（BSD-3-Clause）、h2（MIT）
-   - 用途：抖音接口请求（HTTP/2、超时与连接管理）
-   - 来源：https://github.com/encode/httpx  /  https://github.com/python-hyper/h2
-
-本文件仅作组件清单与许可指引，不构成法律意见。正式对外分发前，建议由项目所有者结合
-实际分发方式完成许可合规复核。
+本文件仅作组件清单与许可指引，不构成法律意见。正式对外分发前，建议由项目所有者
+结合实际分发方式完成许可合规复核。

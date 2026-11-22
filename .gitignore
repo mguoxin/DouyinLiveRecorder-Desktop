@@ -11,8 +11,9 @@ dist/
 release/
 build/pyinstaller/
 
-# 内置 FFmpeg 可执行文件（约 100MB，超出常规托管限制；版本与校验和见 docs/RELEASE_REPORT_0.1.0.md）
+# 内置 FFmpeg 可执行文件与共享库（体积超出常规托管限制；版本与校验和见 tools/ffmpeg/README.txt）
 tools/ffmpeg/bin/*.exe
+tools/ffmpeg/bin/*.dll
 
 # 运行时用户数据（数据库、录制文件、日志）
 data/

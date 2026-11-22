@@ -34,8 +34,13 @@ def _wait_for(qt_app, predicate, timeout: float = 60.0) -> None:
 
 @pytest.fixture(scope="module")
 def sample_media(tmp_path_factory) -> Path:
+    """生成测试用媒体。
+
+    使用 FFmpeg 内置的 MPEG-4 Part 2 / AAC 编码器（LGPL 构建可用），
+    输出 MPEG-TS，与录制实际采用的封装一致；不依赖 GPL 的 libx264。
+    """
     ffmpeg = _ffmpeg_or_skip()
-    path = tmp_path_factory.mktemp("media") / "sample.flv"
+    path = tmp_path_factory.mktemp("media") / "sample.ts"
     completed = subprocess.run(
         [
             ffmpeg,
@@ -54,13 +59,13 @@ def sample_media(tmp_path_factory) -> Path:
             "-t",
             "12",
             "-c:v",
-            "libx264",
-            "-preset",
-            "ultrafast",
+            "mpeg4",
+            "-q:v",
+            "5",
             "-c:a",
             "aac",
             "-f",
-            "flv",
+            "mpegts",
             str(path),
         ],
         capture_output=True,
@@ -130,7 +135,7 @@ class _SlowMediaHandler(BaseHTTPRequestHandler):
         delay = self.total_duration_s / chunks
         try:
             self.send_response(200)
-            self.send_header("Content-Type", "video/x-flv")
+            self.send_header("Content-Type", "video/mp2t")
             self.send_header("Content-Length", str(len(self.media)))
             self.end_headers()
             for offset in range(0, len(self.media), chunk):
