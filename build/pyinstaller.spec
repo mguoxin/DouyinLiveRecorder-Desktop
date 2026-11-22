@@ -14,6 +14,16 @@ src_dir = project_root / "src"
 # 将项目内置 FFmpeg 一并打包；未安装时仍可构建（运行时回退到 PATH）。
 ffmpeg_bin = project_root / "tools" / "ffmpeg" / "bin" / "ffmpeg.exe"
 datas = [(str(ffmpeg_bin), "ffmpeg/bin")] if ffmpeg_bin.is_file() else []
+# 随包附上 GPLv3 要求的许可与构建说明，以及本项目 MIT LICENSE。
+for extra in (
+    project_root / "tools" / "ffmpeg" / "LICENSE",
+    project_root / "tools" / "ffmpeg" / "README.txt",
+):
+    if extra.is_file():
+        datas.append((str(extra), "ffmpeg"))
+for extra in (project_root / "LICENSE", project_root / "THIRD_PARTY_NOTICES.txt"):
+    if extra.is_file():
+        datas.append((str(extra), "."))
 
 a = Analysis(
     [str(project_root / "build" / "entry.py")],

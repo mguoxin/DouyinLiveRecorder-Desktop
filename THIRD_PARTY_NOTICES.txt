@@ -1,7 +1,10 @@
 DouyinLiveRecorder-Desktop 第三方组件与许可说明
 
-本程序（DouyinLiveRecorder-Desktop 0.3.1）以 Windows onedir 形式分发，随包包含或运行时
+本程序（DouyinLiveRecorder-Desktop 0.4.1）以 Windows onedir 形式分发，随包包含或运行时
 使用以下第三方组件。各组件的版权与许可归其各自权利人所有。
+
+本项目自身源码以 MIT License 发布，全文见仓库根目录 LICENSE。该许可仅覆盖本项目
+原创代码；下列第三方组件仍分别适用其各自许可，MIT 许可不能替代或削弱这些义务。
 
 1. Python 运行时
    - 组件：Python 3.12
@@ -14,16 +17,20 @@ DouyinLiveRecorder-Desktop 第三方组件与许可说明
    - 许可：LGPLv3（Qt 以动态链接方式随程序分发，_internal\ 下的 DLL 可被替换）
    - 来源：https://www.qt.io/qt-6/lgpl  /  https://pypi.org/project/PySide6/
    - 许可文本：https://www.gnu.org/licenses/lgpl-3.0.html
+   - 合规说明：本程序未修改 Qt/PySide6，仅以动态链接方式使用；用户可自行替换
+     _internal\ 下对应的 Qt DLL。分发时保留本声明与许可指引。
 
 3. FFmpeg
    - 组件：FFmpeg 9.0.2（gyan.dev essentials build，GPL v3 构建）
    - 许可：GPL v3
    - 随包位置：_internal\ffmpeg\bin\ffmpeg.exe
-   - 许可文本：licenses\FFmpeg-LICENSE.txt
-   - 构建说明：licenses\FFmpeg-README.txt
+   - 许可文本：_internal\ffmpeg\LICENSE
+   - 构建说明：_internal\ffmpeg\README.txt
    - 对应源码：https://github.com/FFmpeg/FFmpeg/commit/946fcce07b
    - 来源：https://www.gyan.dev/ffmpeg/builds/
-   - 说明：本程序通过独立子进程调用 FFmpeg，不修改 FFmpeg 源码。
+   - 合规说明：本程序通过独立子进程调用 FFmpeg，不修改 FFmpeg 源码，也不将其静态
+     链接进本程序。分发 FFmpeg 二进制时随附其 GPLv3 许可全文、构建说明与对应源码
+     获取地址；若修改 FFmpeg，须按 GPLv3 提供修改后的完整源码。
 
 4. SQLite
    - 组件：SQLite（通过 Python 标准库 sqlite3 使用）

@@ -287,6 +287,15 @@ PyInstaller 6.22.3 已安装到项目虚拟环境，构建命令：
 
 ## 安全与授权边界
 
-- 不自动获取、保存或使用抖音账号凭据 / Cookie（仅匿名会话 Cookie）。
+- 不自动获取或抓取抖音账号凭据 / Cookie；仅可选地由用户手动填写登录 Cookie，
+  经 Windows DPAPI 加密后仅保存在本机，程序不读取其他应用的 Cookie。
 - 不绕过登录、验证码或访问控制。
 - 真实公开接口与指定房间测试已获项目所有者批准；仅使用匿名会话，不读取用户 Cookie。
+
+## 许可
+
+- 本项目源码以 [MIT License](LICENSE) 发布。
+- 安装包内含 FFmpeg（GPLv3 构建）、PySide6 / Qt（LGPLv3）等第三方组件，
+  其许可文本、构建说明与源码地址见 [THIRD_PARTY_NOTICES.txt](THIRD_PARTY_NOTICES.txt)；
+  FFmpeg 的 GPLv3 许可全文随包位于 `ffmpeg\LICENSE`。
+- 抖音解析链路的移植代码遵循上游 MIT 许可，版权声明保留在对应源文件中。
