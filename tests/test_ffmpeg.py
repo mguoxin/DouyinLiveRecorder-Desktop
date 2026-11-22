@@ -11,6 +11,7 @@ from dlrecorder.infrastructure.ffmpeg import (
     FFmpegProcess,
     build_record_command,
     file_size,
+    redact_stream_text,
 )
 
 STUB = r"""
@@ -22,6 +23,17 @@ with open(path, "wb") as f:
         f.flush()
 if mode == "exit3":
     sys.exit(3)
+if mode == "stderr":
+    sys.stderr.write(
+        "https://cdn.example/live.flv?token=SECRET_TOKEN&msToken=SECRET_MS\n"
+    )
+    sys.stderr.write("Cookie: sessionid=SECRET_COOKIE\n")
+    for i in range(2000):
+        sys.stderr.write("noise %04d %s\n" % (i, "y" * 80))
+    sys.stderr.write("retry https://cdn.example/live.flv?token=SECRET_TOKEN\n")
+    sys.stderr.flush()
+    open(path + ".done", "w").close()
+    time.sleep(30)
 if mode == "sleep":
     time.sleep(30)
 if mode == "stdin":
@@ -119,6 +131,72 @@ def test_double_start_rejected(tmp_path):
 
 def test_file_size_missing_returns_zero(tmp_path):
     assert file_size(tmp_path / "missing.ts") == 0
+
+
+def test_redact_stream_text_masks_url_and_credentials():
+    url = (
+        "https://cdn.example/live.flv?expire=1700000000"
+        "&sign=UNIQUE_SIGN&a_bogus=UNIQUE_BOGUS"
+    )
+    text = (
+        f"Error opening input {url}\n"
+        "Cookie: sessionid=UNIQUE_COOKIE\n"
+        "Authorization: Bearer UNIQUE_TOKEN\n"
+        "redirect https://other.example/x?msToken=UNIQUE_MS&x=1"
+    )
+
+    redacted = redact_stream_text(text, url)
+
+    assert "<stream-url>" in redacted
+    assert "UNIQUE_SIGN" not in redacted
+    assert "UNIQUE_BOGUS" not in redacted
+    assert "UNIQUE_COOKIE" not in redacted
+    assert "UNIQUE_TOKEN" not in redacted
+    assert "msToken=<redacted>" in redacted
+    assert "x=1" in redacted
+
+
+def test_stderr_is_drained_redacted_and_bounded(tmp_path):
+    """stderr 持续排空不阻塞进程；落盘内容脱敏且按容量轮转。"""
+    output = tmp_path / "out.ts"
+    diagnostics = tmp_path / "logs"
+    proc = FFmpegProcess(
+        _command(_stub(tmp_path), output, "stderr"),
+        stop_grace_s=0.2,
+        kill_grace_s=2.0,
+        diagnostics_dir=diagnostics,
+        diagnostics_max_bytes=8192,
+    )
+    log_path = diagnostics / "ffmpeg-stderr.log"
+
+    def _log_text() -> str:
+        chunks: list[str] = []
+        for path in (log_path.with_name(log_path.name + ".1"), log_path):
+            try:
+                chunks.append(path.read_text(encoding="utf-8", errors="replace"))
+            except OSError:
+                continue
+        return "".join(chunks)
+
+    proc.start()
+    try:
+        # 子进程写完 stderr 后才创建完成标记；能等到标记说明管道未被写满阻塞。
+        _wait_until(lambda: (tmp_path / "out.ts.done").exists(), timeout=15)
+        assert proc.running is True
+    finally:
+        proc.stop()
+        proc.close_streams()
+
+    _wait_until(lambda: "noise 1999" in _log_text(), timeout=5.0)
+    text = _log_text()
+    assert "token=<redacted>" in text
+    assert "SECRET_TOKEN" not in text
+    assert "SECRET_MS" not in text
+    assert "SECRET_COOKIE" not in text
+    assert (diagnostics / "ffmpeg-stderr.log.1").exists()
+    assert log_path.stat().st_size <= 8400
+    assert proc.stderr_tail()
+    assert proc._stderr_thread is None
 
 
 def test_build_record_command_is_stream_copy(tmp_path):

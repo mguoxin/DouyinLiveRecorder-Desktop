@@ -111,6 +111,7 @@ class RecordingService(QObject):
         db: Database,
         *,
         output_dir: Path,
+        diagnostics_dir: Optional[Path] = None,
         ffmpeg_path: str = "ffmpeg",
         min_free_mb: float = 0.0,
         free_space_provider: FreeSpaceProvider = free_space_mb,
@@ -131,6 +132,9 @@ class RecordingService(QObject):
         super().__init__(parent)
         self._db = db
         self._output_dir = Path(output_dir)
+        self._diagnostics_dir = (
+            Path(diagnostics_dir) if diagnostics_dir is not None else None
+        )
         self._ffmpeg_path = ffmpeg_path
         self._min_free_mb = max(0.0, float(min_free_mb))
         self._free_space_provider = free_space_provider
@@ -418,7 +422,10 @@ class RecordingService(QObject):
             self._ffmpeg_path, stream_url, output_path
         )
         process = FFmpegProcess(
-            command, stop_grace_s=self._stop_grace_s, job=self._job
+            command,
+            stop_grace_s=self._stop_grace_s,
+            job=self._job,
+            diagnostics_dir=self._diagnostics_dir,
         )
         try:
             process.start()
@@ -737,7 +744,10 @@ class RecordingService(QObject):
         try:
             command = self._command_builder(self._ffmpeg_path, stream_url, output_path)
             process = FFmpegProcess(
-                command, stop_grace_s=self._stop_grace_s, job=self._job
+                command,
+                stop_grace_s=self._stop_grace_s,
+                job=self._job,
+                diagnostics_dir=self._diagnostics_dir,
             )
             process.start()
         except (OSError, ValueError) as e:
@@ -878,6 +888,12 @@ class RecordingService(QObject):
                 exit_code,
                 error or "未知原因",
             )
+            if active.process is not None:
+                tail = active.process.stderr_tail()
+                if tail:
+                    logger.warning(
+                        "FFmpeg 诊断输出 room_id=%s:\n%s", active.room_id, tail
+                    )
         else:
             logger.info(
                 "录制完成 room_id=%s recording_id=%s file=%s size=%s requested=%s",

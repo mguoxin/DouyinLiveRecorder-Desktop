@@ -134,6 +134,8 @@ class Application:
 
         options = dict(recording_options or {})
         options.setdefault("output_dir", current.recordings_dir)
+        # FFmpeg stderr 脱敏后落盘到日志目录，便于排查失败原因且不泄露流签名。
+        options.setdefault("diagnostics_dir", self.config.log_dir)
         options.setdefault("ffmpeg_path", current.ffmpeg_path)
         options.setdefault("min_free_mb", float(current.min_free_mb))
         options.setdefault("session_id_provider", self.service.get_session_id)

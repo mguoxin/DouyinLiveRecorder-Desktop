@@ -12,9 +12,12 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import subprocess
 import sys
+import threading
 import time
+from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional, Sequence
@@ -25,8 +28,80 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_STOP_GRACE_S = 5.0
 DEFAULT_KILL_GRACE_S = 2.0
+DEFAULT_DIAGNOSTICS_MAX_BYTES = 256 * 1024
+DEFAULT_STDERR_TAIL_LINES = 40
+DEFAULT_STDERR_JOIN_S = 1.0
 
 _CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0) if sys.platform == "win32" else 0
+
+# 诊断日志只记录 FFmpeg 输出；写入前必须掩码可能携带凭据的查询参数与请求头。
+_SENSITIVE_QUERY = re.compile(
+    r"(?i)(?P<key>\b(?:access_token|refresh_token|token|cookie|sessionid|"
+    r"session_key|a_bogus|x[_-]bogus|mstoken|ttwid|sign|signature|auth_key|"
+    r"expire|x-expires|x-signature|x-amz-credential|x-amz-signature|"
+    r"x-amz-security-token))=(?P<value>[^&\s\"']+)"
+)
+_SENSITIVE_HEADER = re.compile(
+    r"(?i)(?P<header>\b(?:cookie|authorization|proxy-authorization):\s*).*"
+)
+
+
+def redact_stream_text(text: str, stream_url: str = "") -> str:
+    """掩码流地址与常见凭据参数，避免诊断日志泄露可复用签名。"""
+    if stream_url:
+        text = text.replace(stream_url, "<stream-url>")
+    text = _SENSITIVE_QUERY.sub(r"\g<key>=<redacted>", text)
+    text = _SENSITIVE_HEADER.sub(r"\g<header><redacted>", text)
+    return text
+
+
+class _DiagnosticsLog:
+    """有界诊断日志：单文件写入，超过上限时轮转为 ``.1``。"""
+
+    def __init__(self, path: Path, max_bytes: int) -> None:
+        self._path = Path(path)
+        self._max_bytes = max(1024, int(max_bytes))
+        self._lock = threading.Lock()
+
+    @property
+    def path(self) -> Path:
+        return self._path
+
+    def write(self, text: str) -> None:
+        data = text.encode("utf-8", "replace")
+        with self._lock:
+            try:
+                self._path.parent.mkdir(parents=True, exist_ok=True)
+                if (
+                    self._path.exists()
+                    and self._path.stat().st_size + len(data) > self._max_bytes
+                ):
+                    rotated = self._path.with_name(self._path.name + ".1")
+                    try:
+                        rotated.unlink()
+                    except FileNotFoundError:
+                        pass
+                    self._path.replace(rotated)
+                with self._path.open("ab") as handle:
+                    handle.write(data)
+            except OSError:
+                # 诊断落盘失败不得影响录制。
+                logger.debug("写入 FFmpeg 诊断日志失败: %s", self._path, exc_info=True)
+
+
+_DIAGNOSTICS_LOGS: dict[str, _DiagnosticsLog] = {}
+_DIAGNOSTICS_LOGS_LOCK = threading.Lock()
+
+
+def _diagnostics_log(path: Path, max_bytes: int) -> _DiagnosticsLog:
+    """同一路径共用一把写锁，避免多个录制线程互相截断日志。"""
+    key = str(Path(path).resolve())
+    with _DIAGNOSTICS_LOGS_LOCK:
+        sink = _DIAGNOSTICS_LOGS.get(key)
+        if sink is None:
+            sink = _DiagnosticsLog(path, max_bytes)
+            _DIAGNOSTICS_LOGS[key] = sink
+        return sink
 
 
 @dataclass(frozen=True)
@@ -203,6 +278,8 @@ class FFmpegProcess:
         stop_grace_s: float = DEFAULT_STOP_GRACE_S,
         kill_grace_s: float = DEFAULT_KILL_GRACE_S,
         job: Optional[KillOnCloseJob] = None,
+        diagnostics_dir: Optional[Path] = None,
+        diagnostics_max_bytes: int = DEFAULT_DIAGNOSTICS_MAX_BYTES,
     ) -> None:
         if not command:
             raise ValueError("command 不能为空")
@@ -212,6 +289,19 @@ class FFmpegProcess:
         self._kill_grace_s = max(0.0, kill_grace_s)
         self._job = job
         self._proc: Optional[subprocess.Popen] = None
+        # 用于在诊断日志中把完整流地址替换为固定占位符。
+        self._input_url = ""
+        if "-i" in self._command:
+            index = self._command.index("-i")
+            if index + 1 < len(self._command):
+                self._input_url = self._command[index + 1]
+        self._diagnostics = (
+            _diagnostics_log(diagnostics_dir / "ffmpeg-stderr.log", diagnostics_max_bytes)
+            if diagnostics_dir is not None
+            else None
+        )
+        self._stderr_thread: Optional[threading.Thread] = None
+        self._stderr_tail: deque[str] = deque(maxlen=DEFAULT_STDERR_TAIL_LINES)
 
     @property
     def pid(self) -> Optional[int]:
@@ -232,14 +322,45 @@ class FFmpegProcess:
             self._command,
             stdin=subprocess.PIPE,
             stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
             cwd=self._cwd,
             creationflags=_CREATE_NO_WINDOW,
         )
+        # 专用线程持续排空 stderr，避免管道写满导致 FFmpeg 阻塞。
+        self._stderr_thread = threading.Thread(
+            target=self._drain_stderr,
+            name=f"dlr-ffmpeg-stderr-{self._proc.pid}",
+            daemon=True,
+        )
+        self._stderr_thread.start()
         # 加入 Job Object：应用被强制结束时由系统一并终止，避免孤儿进程。
         if self._job is not None:
             self._job.assign(self._proc.pid)
         logger.info("FFmpeg 已启动 pid=%s", self._proc.pid)
+
+    def _drain_stderr(self) -> None:
+        """逐行读取并脱敏 FFmpeg stderr；任何异常都只结束读取线程。"""
+        proc = self._proc
+        if proc is None or proc.stderr is None:
+            return
+        try:
+            for raw in iter(proc.stderr.readline, b""):
+                line = raw.decode("utf-8", "replace").rstrip("\r\n")
+                if not line:
+                    continue
+                line = redact_stream_text(line, self._input_url)
+                self._stderr_tail.append(line)
+                if self._diagnostics is not None:
+                    self._diagnostics.write(line + "\n")
+        except (OSError, ValueError):
+            logger.debug("读取 FFmpeg stderr 结束", exc_info=True)
+
+    def stderr_tail(self, limit: int = 20) -> str:
+        """返回最近若干行已脱敏诊断输出，供错误日志附加。"""
+        lines = list(self._stderr_tail)
+        if limit > 0:
+            lines = lines[-limit:]
+        return "\n".join(lines)
 
     def poll(self) -> Optional[int]:
         return self._proc.poll() if self._proc is not None else None
@@ -338,4 +459,13 @@ class FFmpegProcess:
             try:
                 self._proc.stdin.close()
             except OSError:
+                pass
+        thread = self._stderr_thread
+        if thread is not None:
+            thread.join(timeout=DEFAULT_STDERR_JOIN_S)
+            self._stderr_thread = None
+        if self._proc.stderr is not None:
+            try:
+                self._proc.stderr.close()
+            except (OSError, ValueError):
                 pass
