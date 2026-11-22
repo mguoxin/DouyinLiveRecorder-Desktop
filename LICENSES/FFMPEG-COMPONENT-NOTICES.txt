@@ -71,6 +71,7 @@ SPIRV-Cross | git 57e4efcc84112abcd426dc5ec248b5339bee04f2 | Apache-2.0 | Copyri
 SPIRV-Headers | git 5c6004e758e0c80185ef2cee93ae5c10fa342a5b | MIT (Khronos) | Copyright (c) 2015-2024 The Khronos Group Inc. | ffmpeg-components/SPIRV-Headers__LICENSE
 sratom | git 9e8ee84eed502e6030ce8bb49694fd28542b08fc | ISC | Copyright 2012-2026 David Robillard | ffmpeg-components/sratom__COPYING
 srt | git 23af65f7dafb0f65b80312b859f80aeece557924 | MPL-2.0 | Copyright (c) 2015-2026, Haivision Systems Inc. | ffmpeg-components/srt__LICENSE
+soxr | git 945b592b70470e29f917f4de89b4281fbbd540c0 | LGPL-2.1-or-later | Copyright (c) 2007-2018 Rob Sykes (robs@users.sourceforge.net) | ffmpeg-components/soxr__COPYING.LGPL, ffmpeg-components/soxr__LICENCE
 SVT-AV1 | git 5fdf6b2f373bd96256bb6b45f892077b1b4431d9 | BSD-3-Clause (upstream) | Copyright (c) 2019, Alliance for Open Media | ffmpeg-components/SVT-AV1__LICENSE-BSD2.md, ffmpeg-components/SVT-AV1__LICENSE.md
 twolame | git 6fced852d4d5cfad58cf9dbe3ea619b08e87d398 | LGPL-2.1-or-later | Copyright (C) 2004-2026 The twolame authors | ffmpeg-components/twolame__twolame-6fced852d4d5cfad58cf9dbe3ea619b08e87d398__COPYING
 uavs3d | git 0e20d2c291853f196c68922a264bcd8471d75b68 | BSD-3-Clause (upstream) | Copyright (c) 2018-2022 Peking University Shenzhen Graduate School, Peng Cheng Laboratory, Guangdong Bohua UHD Innovation Corporation | ffmpeg-components/uavs3d__COPYING
