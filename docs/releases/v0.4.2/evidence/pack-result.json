@@ -1,0 +1,57 @@
+[
+  {
+    "check": "EXE 版本信息",
+    "status": "PASS",
+    "detail": "{\"FileVersion\":\"0.4.2.0\",\"ProductVersion\":\"0.4.2\",\"FileDescription\":\"抖音直播录制工具\"}"
+  },
+  {
+    "check": "PE 图标资源",
+    "status": "PASS",
+    "detail": "RT_ICON=10 RT_GROUP_ICON=1"
+  },
+  {
+    "check": "许可材料随包",
+    "status": "PASS",
+    "detail": "[\"DouyinLiveRecorder.exe\", \"LICENSE\", \"LICENSES\", \"THIRD_PARTY_NOTICES.txt\", \"_internal\"]"
+  },
+  {
+    "check": "内置 FFmpeg",
+    "status": "PASS",
+    "detail": "ffmpeg version n9.0.2-61-gd59078794d-20261121 Copyright (c) 2000-2026 the FFmpeg developers"
+  },
+  {
+    "check": "构造遗留 FFmpeg 进程",
+    "status": "PASS",
+    "detail": "pid=9484 exe=C:\\Users\\kglpl\\Desktop\\DouyinLiveRecorder-Desktop\\dist\\DouyinLiveRecorder\\_internal\\ffmpeg\\bin\\ffmpeg.exe"
+  },
+  {
+    "check": "打包程序启动",
+    "status": "PASS",
+    "detail": "running=True pid=15628"
+  },
+  {
+    "check": "启动时清理遗留 FFmpeg",
+    "status": "PASS",
+    "detail": "orphan_pid=9484 alive=False"
+  },
+  {
+    "check": "打包运行创建 Schema v2 数据库",
+    "status": "PASS",
+    "detail": "schema_version=2 integrity=ok"
+  },
+  {
+    "check": "发送窗口关闭",
+    "status": "PASS",
+    "detail": "windows_closed=1"
+  },
+  {
+    "check": "打包程序正常退出",
+    "status": "PASS",
+    "detail": "exit_code=0"
+  },
+  {
+    "check": "退出后无残留 FFmpeg",
+    "status": "PASS",
+    "detail": "pids=[]"
+  }
+]

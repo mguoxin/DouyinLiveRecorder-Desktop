@@ -1,0 +1,131 @@
+{
+  "elapsed_s": 61.0,
+  "results": [
+    {
+      "check": "窗口显示",
+      "status": "PASS",
+      "detail": "visible=True"
+    },
+    {
+      "check": "监控确认开播后自动录制启动",
+      "status": "PASS",
+      "detail": "[{\"error\": \"\", \"file_path\": \"C:\\\\Users\\\\kglpl\\\\AppData\\\\Local\\\\Temp\\\\dlr-v042-verify\\\\run\\\\data\\\\data\\\\recordings\\\\验证直播_verify-live_20261124_225016_f27f71.ts\", \"file_size\": 0, \"recording_id\": 1, \"room_id\": 1, \"status\": \"recording\"}]"
+    },
+    {
+      "check": "真实 FFmpeg 输出文件增长",
+      "status": "PASS",
+      "detail": "size=524288"
+    },
+    {
+      "check": "隐藏并恢复窗口",
+      "status": "PASS",
+      "detail": "hidden=True restored=True tray=no"
+    },
+    {
+      "check": "主题切换",
+      "status": "PASS",
+      "detail": "light,dark,system"
+    },
+    {
+      "check": "录制期间资源采样",
+      "status": "PASS",
+      "detail": "{\"t\": 1795531845.269, \"working_set_mb\": 87.7, \"private_mb\": 57.2, \"handles\": 339}"
+    },
+    {
+      "check": "关闭取消保持录制与窗口",
+      "status": "PASS",
+      "detail": "{\"shutdown_started\": false, \"visible\": true, \"recording\": true}"
+    },
+    {
+      "check": "强杀后续录与恢复事件",
+      "status": "PASS",
+      "detail": "{\"reconnecting\": [{\"attempt\": 1, \"delay_s\": 0.3, \"error\": \"FFmpeg 退出码 1\", \"exit_code\": 1, \"max_attempts\": 2, \"room_id\": 1}], \"recovered\": [{\"attempt\": 1, \"file_path\": \"C:\\\\Users\\\\kglpl\\\\AppData\\\\Local\\\\Temp\\\\dlr-v042-verify\\\\run\\\\data\\\\data\\\\recordings\\\\验证直播_verify-live_20261124_225046_5fc93e.ts\", \"room_id\": 1}], \"recovered_file_exists\": true}"
+    },
+    {
+      "check": "恢复分段继续写入",
+      "status": "PASS",
+      "detail": "size=524288"
+    },
+    {
+      "check": "手动停止并正常收尾",
+      "status": "PASS",
+      "detail": "{\"error\": \"\", \"file_path\": \"C:\\\\Users\\\\kglpl\\\\AppData\\\\Local\\\\Temp\\\\dlr-v042-verify\\\\run\\\\data\\\\data\\\\recordings\\\\验证直播_verify-live_20261124_225046_5fc93e.ts\", \"file_size\": 652548, \"recording_id\": 2, \"requested\": true, \"room_id\": 1, \"scope\": \"segment\", \"status\": \"completed\", \"will_retry\": false}"
+    },
+    {
+      "check": "多房间同时异常最终失败",
+      "status": "PASS",
+      "detail": "{\"count\": 3, \"launch_window_s\": 0.62, \"events\": [{\"error\": \"自动续录失败：直播中但未取得流地址（已尝试 2 次）\", \"file_path\": \"\", \"file_size\": null, \"recording_id\": null, \"requested\": false, \"room_id\": 2, \"scope\": \"session\", \"status\": \"failed\"}, {\"error\": \"自动续录失败：直播中但未取得流地址（已尝试 2 次）\", \"file_path\": \"\", \"file_size\": null, \"recording_id\": null, \"requested\": false, \"room_id\": 3, \"scope\": \"session\", \"status\": \"failed\"}, {\"error\": \"自动续录失败：直播中但未取得流地址（已尝试 2 次）\", \"file_path\": \"\", \"file_size\": null, \"recording_id\": null, \"requested\": false, \"room_id\": 4, \"scope\": \"session\", \"status\": \"failed\"}]}"
+    },
+    {
+      "check": "结构化错误事件",
+      "status": "PASS",
+      "detail": "{\"count\": 3, \"sample\": [{\"category\": \"network\", \"message\": \"自动续录失败：直播中但未取得流地址（已尝试 2 次）\", \"phase\": \"session_failed\", \"retryable\": false, \"room_id\": 2}, {\"category\": \"network\", \"message\": \"自动续录失败：直播中但未取得流地址（已尝试 2 次）\", \"phase\": \"session_failed\", \"retryable\": false, \"room_id\": 3}, {\"category\": \"network\", \"message\": \"自动续录失败：直播中但未取得流地址（已尝试 2 次）\", \"phase\": \"session_failed\", \"retryable\": false, \"room_id\": 4}]}"
+    },
+    {
+      "check": "重复关闭与覆盖层",
+      "status": "PASS",
+      "detail": "{\"overlay_shown\": true, \"shutdown_complete\": true, \"shutdown_s\": 0.03}"
+    },
+    {
+      "check": "退出后 FFmpeg 子进程清理",
+      "status": "PASS",
+      "detail": "remaining=[]"
+    },
+    {
+      "check": "进程登记表清空",
+      "status": "PASS",
+      "detail": "{\n  \"version\": 1,\n  \"updated_at\": \"2026-11-24T14:51:12Z\",\n  \"processes\": []\n}"
+    },
+    {
+      "check": "数据库完整性",
+      "status": "PASS",
+      "detail": "ok"
+    },
+    {
+      "check": "Schema 版本",
+      "status": "PASS",
+      "detail": "user_version=2"
+    },
+    {
+      "check": "数据落库",
+      "status": "PASS",
+      "detail": "{\"rooms\": 4, \"recordings\": {\"completed\": 1, \"failed\": 4}, \"sessions\": {\"stopped\": 1}}"
+    },
+    {
+      "check": "窗口生命周期诊断",
+      "status": "PASS",
+      "detail": "window-trace lines=22"
+    },
+    {
+      "check": "错误日志可见性",
+      "status": "PASS",
+      "detail": "ERROR lines=10"
+    }
+  ],
+  "resource_samples": [
+    {
+      "t": 1795531839.246,
+      "working_set_mb": 87.7,
+      "private_mb": 57.2,
+      "handles": 339
+    },
+    {
+      "t": 1795531841.257,
+      "working_set_mb": 87.7,
+      "private_mb": 57.2,
+      "handles": 339
+    },
+    {
+      "t": 1795531843.268,
+      "working_set_mb": 87.7,
+      "private_mb": 57.2,
+      "handles": 339
+    },
+    {
+      "t": 1795531845.269,
+      "working_set_mb": 87.7,
+      "private_mb": 57.2,
+      "handles": 339
+    }
+  ]
+}

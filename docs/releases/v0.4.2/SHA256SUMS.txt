@@ -1,0 +1,16 @@
+# DouyinLiveRecorder-Desktop v0.4.2 候选构件 SHA-256
+# 生成时间: 2026-11-24 (Asia/Shanghai)
+# 说明: 候选验收用，未创建 Git 标签、未发布 GitHub Release。
+
+bcb3c2f166eabb02fc5a2c4061adde8d001204a26503f2b70be5c132164a8e88  DouyinLiveRecorder.exe
+087779a25596533ca2a22c6d7cce562a085b1bbae88a03d7ddce8a27ede71040  DouyinLiveRecorder-v0.4.2-candidate.zip
+e862022fc13e5225a26f4d98f454de3de59a5b025af479bad3ac4c03bc4e2c08  THIRD_PARTY_NOTICES.txt
+9a95cf7f11bb3ea3669cb2c725abfde4bb46790d0d1e261f38652f61e99273b0  FFMPEG-SOURCE-OFFER.txt
+78f34c60535967e0123997893432e7e6a07dda513e6bc7edfb0b1fc9b69ded55  FFMPEG-COMPONENT-NOTICES.txt
+
+# 路径对照
+# DouyinLiveRecorder.exe            -> dist/DouyinLiveRecorder/DouyinLiveRecorder.exe
+# DouyinLiveRecorder-v0.4.2-candidate.zip -> dist/DouyinLiveRecorder-v0.4.2-candidate.zip
+# THIRD_PARTY_NOTICES.txt           -> 仓库根目录（同时随包复制到发布根目录）
+# FFMPEG-SOURCE-OFFER.txt           -> 仓库根目录
+# FFMPEG-COMPONENT-NOTICES.txt      -> LICENSES/（随包复制到发布根目录 LICENSES/）
