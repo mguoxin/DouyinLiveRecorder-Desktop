@@ -222,6 +222,12 @@ def choose_directory(
 # ---------------------------------------------------------------------------
 # 房间列表
 # ---------------------------------------------------------------------------
+# 录制列的结构化状态，避免用文本反推“录制中/重连中/失败”。
+_RECORD_STATE_ROLE = int(Qt.ItemDataRole.UserRole) + 11
+_RECORD_ATTEMPT_ROLE = int(Qt.ItemDataRole.UserRole) + 12
+_RECORD_MAX_ATTEMPT_ROLE = int(Qt.ItemDataRole.UserRole) + 13
+
+
 class _StatusPillDelegate(QStyledItemDelegate):
     """把“是/否”绘制成状态胶囊，同时保留原始单元格文本供逻辑使用。"""
 
@@ -255,9 +261,31 @@ class _StatusPillDelegate(QStyledItemDelegate):
             foreground = tokens.success if active else tokens.text_muted
             soft = tokens.success_soft if active else tokens.surface_alt
         else:
-            label = "录制中" if active else "未录制"
-            foreground = tokens.accent_fg if active else tokens.text_muted
-            soft = tokens.accent_soft if active else tokens.surface_alt
+            state = index.data(_RECORD_STATE_ROLE)
+            if state is None:
+                state = "recording" if active else "idle"
+            if state == "recording":
+                label = "录制中"
+                foreground = tokens.accent_fg
+                soft = tokens.accent_soft
+            elif state == "reconnecting":
+                attempt = index.data(_RECORD_ATTEMPT_ROLE) or 0
+                max_attempts = index.data(_RECORD_MAX_ATTEMPT_ROLE) or 0
+                label = (
+                    f"重连中 {attempt}/{max_attempts}"
+                    if attempt and max_attempts
+                    else "重连中"
+                )
+                foreground = tokens.warning
+                soft = tokens.warning_soft
+            elif state == "failed":
+                label = "录制失败"
+                foreground = tokens.danger
+                soft = tokens.danger_soft
+            else:
+                label = "未录制"
+                foreground = tokens.text_muted
+                soft = tokens.surface_alt
 
         metrics = option.fontMetrics
         width = metrics.horizontalAdvance(label) + 26
@@ -326,7 +354,7 @@ class RoomListWidget(QTableWidget):
         self.setColumnWidth(3, 84)
         self.setColumnWidth(4, 92)
         self.setColumnWidth(5, 92)
-        self.setColumnWidth(6, 92)
+        self.setColumnWidth(6, 116)
         self.hideColumn(0)
 
         self._monitor_delegate = _StatusPillDelegate("monitor", self)
@@ -403,9 +431,42 @@ class RoomListWidget(QTableWidget):
             self.item(row, 5).setText("是" if monitoring else "否")
 
     def set_recording(self, room_id: int, recording: bool) -> None:
+        self.set_recording_state(
+            room_id, "recording" if recording else "idle"
+        )
+
+    def set_recording_state(
+        self,
+        room_id: int,
+        state: str,
+        *,
+        attempt: int = 0,
+        max_attempts: int = 0,
+    ) -> None:
+        """更新录制列：idle / recording / reconnecting / failed。"""
         row = self._room_rows.get(room_id)
-        if row is not None:
-            self.item(row, 6).setText("是" if recording else "否")
+        if row is None:
+            return
+        item = self.item(row, 6)
+        if item is None:
+            return
+        item.setText("是" if state == "recording" else "否")
+        item.setData(_RECORD_STATE_ROLE, state)
+        item.setData(_RECORD_ATTEMPT_ROLE, attempt if state == "reconnecting" else 0)
+        item.setData(
+            _RECORD_MAX_ATTEMPT_ROLE, max_attempts if state == "reconnecting" else 0
+        )
+        tooltips = {
+            "recording": "正在录制",
+            "reconnecting": (
+                f"录制中断，正在第 {attempt}/{max_attempts} 次自动续录"
+                if attempt and max_attempts
+                else "录制中断，正在自动续录"
+            ),
+            "failed": "录制失败，详情见日志页",
+            "idle": "当前未录制",
+        }
+        item.setToolTip(tooltips.get(state, ""))
 
     def monitoring(self, room_id: int) -> bool:
         row = self._room_rows.get(room_id)
@@ -414,6 +475,19 @@ class RoomListWidget(QTableWidget):
     def recording(self, room_id: int) -> bool:
         row = self._room_rows.get(room_id)
         return bool(row is not None and self.item(row, 6).text() == "是")
+
+    def recording_state(self, room_id: int) -> str:
+        """返回录制列的结构化状态：idle / recording / reconnecting / failed。"""
+        row = self._room_rows.get(room_id)
+        if row is None:
+            return "idle"
+        item = self.item(row, 6)
+        if item is None:
+            return "idle"
+        state = item.data(_RECORD_STATE_ROLE)
+        if state:
+            return str(state)
+        return "recording" if item.text() == "是" else "idle"
 
     def selected_room_id(self) -> Optional[int]:
         rows = self.selectionModel().selectedRows()

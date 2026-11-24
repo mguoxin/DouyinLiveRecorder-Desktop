@@ -705,3 +705,100 @@ def test_shutdown_skips_further_resume_resolution(env, qt_app):
     assert elapsed < 3.0
     # 关闭置位后不再发起第二次解析；只保留关闭前已在执行的那一次。
     assert len(calls) == 1
+
+
+def test_start_error_exposes_structured_payload(env, qt_app):
+    """结构化错误载荷携带阶段/类别/可重试语义，兼容信号保持不变。"""
+    service = env.service()
+    infos: list[dict] = []
+    legacy: list[str] = []
+    service.recording_error_info.connect(lambda rid, payload: infos.append(payload))
+    service.recording_error.connect(lambda rid, msg: legacy.append(msg))
+
+    service.start_recording(env.room_id, None)
+    _wait_for(qt_app, lambda: bool(infos))
+
+    assert infos[0]["phase"] == "start_failed"
+    assert infos[0]["category"] == "network"
+    assert infos[0]["retryable"] is True
+    assert "尚未解析到直播流地址" in infos[0]["message"]
+    assert legacy == ["尚未解析到直播流地址，无法开始录制"]
+
+
+def test_duplicate_start_is_categorized_without_failure_state(env, qt_app):
+    service = env.service()
+    infos: list[dict] = []
+    service.recording_error_info.connect(lambda rid, payload: infos.append(payload))
+
+    service.start_recording(env.room_id, "https://example.invalid/live.flv")
+    _wait_for(qt_app, lambda: service.is_recording(env.room_id))
+    service.start_recording(env.room_id, "https://example.invalid/live.flv")
+    _wait_for(qt_app, lambda: bool(infos))
+
+    assert infos[0]["phase"] == "start_failed"
+    assert infos[0]["category"] == "duplicate"
+
+
+def test_reconnect_marks_segment_will_retry_and_emits_recovered(env, qt_app):
+    """续录路径：分段事件标记 will_retry，新分段启动后才发 recovered。"""
+    service = env.service(
+        "flaky:1",
+        stream_resolver=_live_resolver(),
+        reconnect_delays_s=(0.05,),
+        poll_interval_s=0.03,
+    )
+    finished: list[dict] = []
+    recovered: list[dict] = []
+    service.recording_finished.connect(lambda rid, snap: finished.append(snap))
+    service.recording_recovered.connect(lambda rid, snap: recovered.append(snap))
+
+    service.start_recording(env.room_id, "https://example.invalid/live.flv")
+    _wait_for(qt_app, lambda: bool(recovered), timeout=15)
+
+    assert finished[0]["scope"] == "segment"
+    assert finished[0]["status"] == "failed"
+    assert finished[0]["will_retry"] is True
+    assert finished[0]["requested"] is False
+    assert recovered[0]["attempt"] == 1
+
+
+def test_terminal_segment_failure_is_not_marked_will_retry(env, qt_app):
+    """没有续录预算的异常退出只发分段失败，必须可被通知层识别为最终失败。"""
+    service = env.service("exit3")
+    finished: list[dict] = []
+    recovered: list[dict] = []
+    service.recording_finished.connect(lambda rid, snap: finished.append(snap))
+    service.recording_recovered.connect(lambda rid, snap: recovered.append(snap))
+
+    service.start_recording(env.room_id, "https://example.invalid/live.flv")
+    _wait_for(qt_app, lambda: bool(finished), timeout=15)
+
+    assert finished[0]["scope"] == "segment"
+    assert finished[0]["status"] == "failed"
+    assert finished[0]["will_retry"] is False
+    assert recovered == []
+
+
+def test_manual_stop_while_waiting_does_not_emit_error(env, qt_app):
+    """用户主动停止等待中的续录不应被报告为录制错误。"""
+    service = env.service(
+        "flaky:99",
+        stream_resolver=_live_resolver(),
+        reconnect_delays_s=(5.0,),
+        poll_interval_s=0.03,
+    )
+    reconnecting: list[dict] = []
+    finished: list[dict] = []
+    errors: list[str] = []
+    service.recording_reconnecting.connect(lambda rid, snap: reconnecting.append(snap))
+    service.recording_finished.connect(lambda rid, snap: finished.append(snap))
+    service.recording_error.connect(lambda rid, msg: errors.append(msg))
+
+    service.start_recording(env.room_id, "https://example.invalid/live.flv")
+    _wait_for(qt_app, lambda: bool(reconnecting), timeout=10)
+    service.stop_recording(env.room_id)
+    _wait_for(qt_app, lambda: len(finished) == 2)
+
+    assert errors == []
+    assert finished[-1]["scope"] == "session"
+    assert finished[-1]["requested"] is True

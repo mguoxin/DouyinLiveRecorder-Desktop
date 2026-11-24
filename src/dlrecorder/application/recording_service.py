@@ -102,9 +102,14 @@ class RecordingService(QObject):
     # room_id, snapshot
     recording_started = Signal(int, dict)
     recording_finished = Signal(int, dict)
+    # 兼容信号：保留原有的纯文本载荷，避免破坏既有消费者。
     recording_error = Signal(int, str)
+    # 结构化错误（phase/category/retryable/message），供通知层准确判断语义。
+    recording_error_info = Signal(int, dict)
     # room_id, snapshot（attempt/max_attempts/delay_s/exit_code/error）
     recording_reconnecting = Signal(int, dict)
+    # 续录成功、真正恢复写入后发出（room_id, {attempt, file_path}）。
+    recording_recovered = Signal(int, dict)
 
     def __init__(
         self,
@@ -186,7 +191,13 @@ class RecordingService(QObject):
     def start_recording(self, room_id: int, stream_url: Optional[str]) -> None:
         """请求开始录制；结果通过信号返回，不阻塞调用线程。"""
         if self._shutdown_report is not None:
-            self._emit_error(room_id, "录制服务已关闭，无法开始录制")
+            self._emit_error(
+                room_id,
+                "录制服务已关闭，无法开始录制",
+                phase="start_failed",
+                category="other",
+                retryable=False,
+            )
             return
         self._queue.put(("start", room_id, stream_url))
 
@@ -381,14 +392,26 @@ class RecordingService(QObject):
                 except Exception as e:  # noqa: BLE001 - 单条命令失败不终止管理线程
                     logger.exception("录制命令执行失败: %s", kind)
                     room_id = command[1] if len(command) > 1 else 0
-                    self.recording_error.emit(int(room_id), str(e))
+                    self._emit_error(
+                        int(room_id),
+                        str(e),
+                        phase="runtime_failed",
+                        category="other",
+                        retryable=False,
+                    )
         finally:
             # 兜底：线程退出前不得留下仍在写的 FFmpeg 进程。
             self._stop_all()
 
     def _handle_start(self, room_id: int, stream_url: Optional[str]) -> None:
         if self._output_error:
-            self._emit_error(room_id, f"录制输出目录不可用: {self._output_error}")
+            self._emit_error(
+                room_id,
+                f"录制输出目录不可用: {self._output_error}",
+                phase="start_failed",
+                category="output_dir",
+                retryable=False,
+            )
             return
         free = self._disk_below_threshold()
         if free is not None:
@@ -396,6 +419,9 @@ class RecordingService(QObject):
                 room_id,
                 f"磁盘剩余空间不足：可用 {free:.0f} MB，"
                 f"最低要求 {self._min_free_mb:.0f} MB，已阻止开始录制",
+                phase="start_failed",
+                category="disk",
+                retryable=False,
             )
             return
         with self._active_lock:
@@ -404,15 +430,33 @@ class RecordingService(QObject):
             else:
                 duplicate = False
         if duplicate:
-            self._emit_error(room_id, "该房间已在录制中")
+            self._emit_error(
+                room_id,
+                "该房间已在录制中",
+                phase="start_failed",
+                category="duplicate",
+                retryable=False,
+            )
             return
         if not stream_url:
-            self._emit_error(room_id, "尚未解析到直播流地址，无法开始录制")
+            self._emit_error(
+                room_id,
+                "尚未解析到直播流地址，无法开始录制",
+                phase="start_failed",
+                category="network",
+                retryable=True,
+            )
             return
 
         room = self._db.get_room(room_id)
         if room is None:
-            self._emit_error(room_id, f"房间不存在: {room_id}")
+            self._emit_error(
+                room_id,
+                f"房间不存在: {room_id}",
+                phase="start_failed",
+                category="other",
+                retryable=False,
+            )
             return
 
         output_path = self._allocate_output_path(room.web_rid, room.display_name)
@@ -430,7 +474,13 @@ class RecordingService(QObject):
             )
         except Exception as e:  # noqa: BLE001
             logger.exception("创建录制记录失败 room_id=%s", room_id)
-            self._emit_error(room_id, f"创建录制记录失败: {e}")
+            self._emit_error(
+                room_id,
+                f"创建录制记录失败: {e}",
+                phase="start_failed",
+                category="database",
+                retryable=False,
+            )
             return
 
         command = self._command_builder(
@@ -449,7 +499,13 @@ class RecordingService(QObject):
             self._db.finish_recording(
                 recording_id, RecordingStatus.FAILED.value, 0
             )
-            self._emit_error(room_id, f"FFmpeg 启动失败: {e}")
+            self._emit_error(
+                room_id,
+                f"FFmpeg 启动失败: {e}",
+                phase="start_failed",
+                category="process",
+                retryable=False,
+            )
             return
 
         active = _ActiveRecording(
@@ -497,7 +553,10 @@ class RecordingService(QObject):
         if active.process is None:
             # 正在等待自动续录：没有打开的录制分段，直接结束会话。
             self._end_without_segment(
-                active, "已手动停止（等待自动续录期间）", failed=True
+                active,
+                "已手动停止（等待自动续录期间）",
+                failed=True,
+                user_requested=True,
             )
             return
         report = active.process.stop()
@@ -676,6 +735,7 @@ class RecordingService(QObject):
             exit_code=exit_code,
             requested=False,
             error=message,
+            will_retry=True,
         )
         active.process = None
         active.attempts += 1
@@ -700,7 +760,9 @@ class RecordingService(QObject):
 
         room = self._db.get_room(active.room_id)
         if room is None:
-            self._end_without_segment(active, "房间已删除，停止自动续录", failed=True)
+            self._end_without_segment(
+                active, "房间已删除，停止自动续录", failed=True, category="other"
+            )
             return
         low_space = self._disk_below_threshold()
         if low_space is not None:
@@ -708,6 +770,7 @@ class RecordingService(QObject):
                 active,
                 f"磁盘剩余空间不足（可用 {low_space:.0f} MB），停止自动续录",
                 failed=True,
+                category="disk",
             )
             return
 
@@ -812,6 +875,15 @@ class RecordingService(QObject):
                 "attempt": active.attempts,
             },
         )
+        # 只有新分段真正启动成功后才通知恢复，避免“重连已安排”被误报为已恢复。
+        self.recording_recovered.emit(
+            active.room_id,
+            {
+                "room_id": active.room_id,
+                "attempt": active.attempts,
+                "file_path": str(output_path),
+            },
+        )
 
     def _after_failed_attempt(self, active: _ActiveRecording, reason: str) -> None:
         if active.attempts >= self._reconnect_max_attempts:
@@ -825,6 +897,7 @@ class RecordingService(QObject):
                 active,
                 f"自动续录失败：{reason}（已尝试 {active.attempts} 次）",
                 failed=True,
+                category="network",
             )
             return
         active.attempts += 1
@@ -850,7 +923,13 @@ class RecordingService(QObject):
         )
 
     def _end_without_segment(
-        self, active: _ActiveRecording, message: str, *, failed: bool
+        self,
+        active: _ActiveRecording,
+        message: str,
+        *,
+        failed: bool,
+        category: str = "other",
+        user_requested: bool = False,
     ) -> None:
         """结束没有打开分段的录制会话（重试等待中放弃或手动停止）。"""
         if not self._drop_active(active):
@@ -858,7 +937,14 @@ class RecordingService(QObject):
         status = RecordingStatus.FAILED if failed else RecordingStatus.COMPLETED
         if failed:
             logger.error("录制会话结束 room_id=%s: %s", active.room_id, message)
-            self.recording_error.emit(active.room_id, message)
+            if not user_requested:
+                self._emit_error(
+                    active.room_id,
+                    message,
+                    phase="session_failed",
+                    category=category,
+                    retryable=False,
+                )
         else:
             logger.info("录制会话结束 room_id=%s: %s", active.room_id, message)
         self.recording_finished.emit(
@@ -872,6 +958,7 @@ class RecordingService(QObject):
                 "status": status.value,
                 "file_size": None,
                 "error": message if failed else "",
+                "requested": user_requested,
             },
         )
 
@@ -889,6 +976,7 @@ class RecordingService(QObject):
         exit_code: Optional[int],
         requested: bool,
         error: str = "",
+        will_retry: bool = False,
     ) -> None:
         """结束一个录制分段：更新数据库并发出 recording_finished。"""
         size = file_size(active.file_path)
@@ -938,7 +1026,13 @@ class RecordingService(QObject):
                 )
         except Exception as e:  # noqa: BLE001 - 数据库失败不得吞掉信号
             logger.exception("更新录制记录失败 recording_id=%s", active.recording_id)
-            self._emit_error(active.room_id, f"更新录制记录失败: {e}")
+            self._emit_error(
+                active.room_id,
+                f"更新录制记录失败: {e}",
+                phase="db_failed",
+                category="database",
+                retryable=False,
+            )
 
         self._unregister_process(active.recording_id)
         if active.process is not None:
@@ -954,6 +1048,8 @@ class RecordingService(QObject):
                 "status": status.value,
                 "file_size": size,
                 "error": error,
+                "requested": requested,
+                "will_retry": will_retry,
             },
         )
 
@@ -1024,6 +1120,29 @@ class RecordingService(QObject):
         )
         return self._output_dir / name
 
-    def _emit_error(self, room_id: int, message: str) -> None:
-        logger.warning("录制错误 room_id=%s: %s", room_id, message)
+    def _emit_error(
+        self,
+        room_id: int,
+        message: str,
+        *,
+        phase: str = "runtime_failed",
+        category: str = "other",
+        retryable: bool = False,
+    ) -> None:
+        logger.warning(
+            "录制错误 room_id=%s phase=%s category=%s: %s",
+            room_id,
+            phase,
+            category,
+            message,
+        )
+        payload = {
+            "room_id": room_id,
+            "phase": phase,
+            "category": category,
+            "retryable": retryable,
+            "message": message,
+        }
+        # 先发兼容信号，再发结构化信号；两者都只做内存派发，不阻塞录制线程。
         self.recording_error.emit(room_id, message)
+        self.recording_error_info.emit(room_id, payload)

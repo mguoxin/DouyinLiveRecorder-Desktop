@@ -72,15 +72,17 @@ class TrayController(QObject):
         else:
             self._icon.setToolTip("抖音直播录制工具 · 后台运行中")
 
-    def show_message(self, title: str, message: str) -> None:
+    def show_message(
+        self, title: str, message: str, severity: str = "info"
+    ) -> None:
         if self._icon is None or not QSystemTrayIcon.supportsMessages():
             return
-        self._icon.showMessage(
-            title,
-            message,
-            QSystemTrayIcon.MessageIcon.Information,
-            4000,
+        icon = (
+            QSystemTrayIcon.MessageIcon.Warning
+            if severity == "warning"
+            else QSystemTrayIcon.MessageIcon.Information
         )
+        self._icon.showMessage(title, message, icon, 4000)
 
     def dispose(self) -> None:
         if self._icon is not None:
