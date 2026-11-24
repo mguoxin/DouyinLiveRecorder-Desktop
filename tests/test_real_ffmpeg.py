@@ -1,4 +1,4 @@
-"""真实 FFmpeg 集成测试：使用项目内置 FFmpeg 与本地生成媒体，不访问网络。"""
+﻿"""真实 FFmpeg 集成测试：使用项目内置 FFmpeg 与本地生成媒体，不访问网络。"""
 from __future__ import annotations
 
 import subprocess
@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from dlrecorder.application.recording_service import RecordingService
+from dlrecorder.application.recording_service import RecordingService, StreamRefresh
 from dlrecorder.infrastructure.db import Database
 from dlrecorder.infrastructure.ffmpeg import find_local_ffmpeg, probe_ffmpeg
 
@@ -128,6 +128,7 @@ class _SlowMediaHandler(BaseHTTPRequestHandler):
 
     media: bytes = b""
     total_duration_s: float = 8.0
+    loop: bool = False
 
     def do_GET(self) -> None:  # noqa: N802 - http.server 接口
         chunk = 16384
@@ -136,12 +137,16 @@ class _SlowMediaHandler(BaseHTTPRequestHandler):
         try:
             self.send_response(200)
             self.send_header("Content-Type", "video/mp2t")
-            self.send_header("Content-Length", str(len(self.media)))
+            if not self.loop:
+                self.send_header("Content-Length", str(len(self.media)))
             self.end_headers()
-            for offset in range(0, len(self.media), chunk):
-                self.wfile.write(self.media[offset : offset + chunk])
-                self.wfile.flush()
-                time.sleep(delay)
+            while True:
+                for offset in range(0, len(self.media), chunk):
+                    self.wfile.write(self.media[offset : offset + chunk])
+                    self.wfile.flush()
+                    time.sleep(delay)
+                if not self.loop:
+                    break
         except (BrokenPipeError, ConnectionResetError, OSError):
             # FFmpeg 停止录制会主动断开连接，属于预期行为。
             pass
@@ -196,6 +201,76 @@ def test_real_ffmpeg_stop_from_live_like_stream(tmp_path, qt_app, sample_media):
         assert snapshot["status"] == "completed"
         assert snapshot["file_size"] > 0
         assert db.get_recording(snapshot["recording_id"])["status"] == "completed"
+    finally:
+        service.shutdown()
+        db.close()
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+def test_real_ffmpeg_reconnects_after_forced_kill(tmp_path, qt_app, sample_media):
+    """受控强杀 FFmpeg：应进入重连并真正恢复录制，同时给出结构化事件。"""
+    ffmpeg = _ffmpeg_or_skip()
+    handler = type(
+        "SlowMediaHandler",
+        (_SlowMediaHandler,),
+        {"media": sample_media.read_bytes(), "loop": True},
+    )
+    server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    url = f"http://127.0.0.1:{server.server_address[1]}/sample.flv"
+
+    db = Database(tmp_path / "app.db")
+    room_id = db.add_room("real-ffmpeg-kill", "真实强杀续录测试")
+    service = RecordingService(
+        db,
+        output_dir=tmp_path / "recordings",
+        ffmpeg_path=ffmpeg,
+        min_free_mb=0,
+        poll_interval_s=0.1,
+        stall_timeout_s=60,
+        stop_grace_s=5,
+        shutdown_timeout_s=30,
+        stream_resolver=lambda web_rid: StreamRefresh(live=True, stream_url=url),
+        reconnect_delays_s=(0.2,),
+    )
+    started: list[dict] = []
+    reconnecting: list[dict] = []
+    recovered: list[dict] = []
+    finished: list[dict] = []
+    service.recording_started.connect(lambda rid, snap: started.append(snap))
+    service.recording_reconnecting.connect(lambda rid, snap: reconnecting.append(snap))
+    service.recording_recovered.connect(lambda rid, snap: recovered.append(snap))
+    service.recording_finished.connect(lambda rid, snap: finished.append(snap))
+    try:
+        service.start_recording(room_id, url)
+        _wait_for(qt_app, lambda: bool(started), timeout=30)
+        first_path = Path(started[0]["file_path"])
+        _wait_for(
+            qt_app,
+            lambda: first_path.exists() and first_path.stat().st_size > 4096,
+            timeout=30,
+        )
+
+        active = service._active[room_id]
+        assert active.process is not None
+        pid = active.process.pid
+        subprocess.run(
+            ["taskkill", "/PID", str(pid), "/F"],
+            capture_output=True,
+            timeout=10,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+
+        _wait_for(qt_app, lambda: bool(reconnecting), timeout=30)
+        _wait_for(qt_app, lambda: bool(recovered), timeout=30)
+        assert recovered[0]["attempt"] == 1
+        assert Path(recovered[0]["file_path"]).exists()
+
+        service.stop_recording(room_id)
+        _wait_for(qt_app, lambda: bool(finished), timeout=30)
     finally:
         service.shutdown()
         db.close()

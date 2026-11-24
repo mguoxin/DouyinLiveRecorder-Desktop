@@ -89,6 +89,8 @@ class _ActiveRecording:
     next_retry_at: Optional[float] = None
     # 已确认可用的新流地址（退出码 0 但直播仍在时提前解析得到），下一轮直接使用。
     pending_stream_url: Optional[str] = None
+    # 续录新分段已启动但尚未确认写入：首次观察到文件增长后才发恢复事件。
+    recovered_pending: bool = False
 
 
 def _safe_component(text: str, limit: int = 40) -> str:
@@ -611,6 +613,23 @@ class RecordingService(QObject):
             if size > active.last_size:
                 active.last_size = size
                 active.last_growth_at = now
+                if active.recovered_pending:
+                    # 只有在续录分段真正开始写入后才宣布恢复，避免"进程已起但无输出"的误报。
+                    active.recovered_pending = False
+                    self.recording_recovered.emit(
+                        active.room_id,
+                        {
+                            "room_id": active.room_id,
+                            "attempt": active.attempts,
+                            "file_path": str(active.file_path),
+                        },
+                    )
+                    logger.info(
+                        "录制已恢复 room_id=%s attempt=%s file=%s",
+                        active.room_id,
+                        active.attempts,
+                        active.file_path,
+                    )
             elif (
                 self._stall_timeout_s > 0
                 and now - active.last_growth_at >= self._stall_timeout_s
@@ -854,6 +873,7 @@ class RecordingService(QObject):
         active.display_name = room.display_name
         active.last_size = 0
         active.last_growth_at = time.monotonic()
+        active.recovered_pending = True
         self._register_process(active)
         logger.info(
             "自动续录已启动 room_id=%s attempt=%s recording_id=%s file=%s",
@@ -873,15 +893,6 @@ class RecordingService(QObject):
                 "error": "",
                 "resumed": True,
                 "attempt": active.attempts,
-            },
-        )
-        # 只有新分段真正启动成功后才通知恢复，避免“重连已安排”被误报为已恢复。
-        self.recording_recovered.emit(
-            active.room_id,
-            {
-                "room_id": active.room_id,
-                "attempt": active.attempts,
-                "file_path": str(output_path),
             },
         )
 
