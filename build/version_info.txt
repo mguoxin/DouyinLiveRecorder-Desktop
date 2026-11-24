@@ -1,8 +1,8 @@
 # PyInstaller Windows 版本资源（与 src/dlrecorder/__init__.py 的 __version__ 保持一致）
 VSVersionInfo(
   ffi=FixedFileInfo(
-    filevers=(0, 4, 1, 0),
-    prodvers=(0, 4, 1, 0),
+    filevers=(0, 4, 2, 0),
+    prodvers=(0, 4, 2, 0),
     mask=0x3F,
     flags=0x0,
     OS=0x40004,
@@ -18,11 +18,11 @@ VSVersionInfo(
           [
             StringStruct("CompanyName", "DouyinLiveRecorder Desktop"),
             StringStruct("FileDescription", "抖音直播录制工具"),
-            StringStruct("FileVersion", "0.4.1.0"),
+            StringStruct("FileVersion", "0.4.2.0"),
             StringStruct("InternalName", "DouyinLiveRecorder"),
             StringStruct("OriginalFilename", "DouyinLiveRecorder.exe"),
             StringStruct("ProductName", "抖音直播录制工具"),
-            StringStruct("ProductVersion", "0.4.1"),
+            StringStruct("ProductVersion", "0.4.2"),
             StringStruct("Comments", "第三方组件许可见 THIRD_PARTY_NOTICES.txt"),
           ],
         )

@@ -1,6 +1,6 @@
 DouyinLiveRecorder-Desktop 第三方组件与许可说明
 
-本程序（DouyinLiveRecorder-Desktop 0.4.1）以 Windows onedir 形式分发。
+本程序（DouyinLiveRecorder-Desktop 0.4.2）以 Windows onedir 形式分发。
 随包包含或运行时使用以下第三方组件。各组件的版权与许可归其各自权利人所有。
 
 本项目自身源码以 MIT License 发布，全文见包内 LICENSE（仓库根目录同名文件）。

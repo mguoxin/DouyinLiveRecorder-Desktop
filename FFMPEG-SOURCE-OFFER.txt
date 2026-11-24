@@ -1,6 +1,6 @@
-DouyinLiveRecorder 0.4.1 — FFmpeg 对应源码与构建材料获取说明（书面要约）
+DouyinLiveRecorder 0.4.2 — FFmpeg 对应源码与构建材料获取说明（书面要约）
 
-适用版本：DouyinLiveRecorder 0.4.1（候选包，未正式发布）
+适用版本：DouyinLiveRecorder 0.4.2（候选包，未正式发布）
 适用二进制：包内 ffmpeg\bin\ffmpeg.exe 与 avcodec/avdevice/avfilter/avformat/
   avutil/swresample/swscale DLL（BtbN win64-lgpl-shared 构建，
   FFmpeg n9.0.2-61-gd59078794d，构建提交 7f2a6b1050d302144de8366afa37a75e46f326aa）
@@ -41,7 +41,7 @@ DouyinLiveRecorder 0.4.1 — FFmpeg 对应源码与构建材料获取说明（�
 方式二：从公开上游按 SOURCE-MANIFEST.csv 中的精确提交/修订号取得
   （git clone 后 git archive，或使用对应仓库的归档接口；LAME 使用
   https://svn.code.sf.net/p/lame/svn/trunk/lame@7153）。
-方式三：书面请求。在本仓库 Issues 提交标题为 “Source request: v0.4.1” 的请求，
+方式三：书面请求。在本仓库 Issues 提交标题为 “Source request: v0.4.2” 的请求，
   或通过仓库所有者公开联系方式提出。本项目承诺自本要约出具之日起三年内，
   在收到请求后提供上述源码归档与构建配方快照（可通过下载链接提供）。
 
