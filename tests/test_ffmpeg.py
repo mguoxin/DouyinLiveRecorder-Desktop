@@ -109,6 +109,31 @@ def test_stop_falls_back_to_terminate(tmp_path):
     assert report.graceful is False
 
 
+def test_stop_falls_back_to_kill_when_terminate_fails(tmp_path, monkeypatch):
+    """受控验证 kill 回退：terminate 无效时必须真正 kill 并如实报告。
+
+    Windows 的 terminate 是 TerminateProcess，正常进程无法忽略，因此这里
+    屏蔽 terminate 来构造受控场景，验证 finally 兜底路径确实生效。
+    """
+    output = tmp_path / "out.ts"
+    proc = FFmpegProcess(
+        _command(_stub(tmp_path), output, "sleep"),
+        stop_grace_s=0.2,
+        kill_grace_s=2.0,
+    )
+    proc.start()
+    _wait_until(lambda: file_size(output) > 0)
+
+    assert proc._proc is not None
+    monkeypatch.setattr(proc._proc, "terminate", lambda: None)
+    report = proc.stop()
+
+    assert report.terminated is True
+    assert report.killed is True
+    assert report.exited is True
+    assert proc._proc.poll() is not None
+
+
 def test_stop_before_start_is_safe():
     proc = FFmpegProcess(["unused"])
 
