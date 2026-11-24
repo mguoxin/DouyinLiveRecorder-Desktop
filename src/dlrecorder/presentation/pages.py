@@ -544,6 +544,7 @@ class SettingsPage(QWidget):
     settings_saved = Signal(object)
     backup_requested = Signal()
     restore_requested = Signal()
+    diagnostics_requested = Signal()
 
     def __init__(
         self,
@@ -589,6 +590,7 @@ class SettingsPage(QWidget):
         data_layout.addWidget(data_title)
         data_text = QLabel(
             "备份数据库；恢复会在下次启动时生效，录制文件不会被删除。"
+            "诊断报告仅在您主动导出时生成，只保存在本机，不会自动上传。"
         )
         data_text.setObjectName("Secondary")
         data_text.setWordWrap(True)
@@ -597,10 +599,12 @@ class SettingsPage(QWidget):
         button_row.setSpacing(8)
         self.btn_backup = QPushButton("备份数据")
         self.btn_restore = QPushButton("恢复备份")
+        self.btn_diagnostics = QPushButton("导出诊断报告…")
         self.btn_backup.setEnabled(backup_enabled)
         self.btn_restore.setEnabled(restore_enabled)
         button_row.addWidget(self.btn_backup)
         button_row.addWidget(self.btn_restore)
+        button_row.addWidget(self.btn_diagnostics)
         button_row.addStretch(1)
         self.save_status = QLabel("")
         self.save_status.setObjectName("SuccessLabel")
@@ -611,6 +615,7 @@ class SettingsPage(QWidget):
         self.btn_save.clicked.connect(self._on_save)
         self.btn_backup.clicked.connect(self.backup_requested.emit)
         self.btn_restore.clicked.connect(self.restore_requested.emit)
+        self.btn_diagnostics.clicked.connect(self.diagnostics_requested.emit)
         self.panel.error_label.hide()
 
     def _on_save(self) -> None:
@@ -628,3 +633,6 @@ class SettingsPage(QWidget):
         self._tokens = tokens
         self.btn_backup.setIcon(icons.icon("shield", tokens.text_secondary, 16))
         self.btn_restore.setIcon(icons.icon("refresh", tokens.text_secondary, 16))
+        self.btn_diagnostics.setIcon(
+            icons.icon("logs", tokens.text_secondary, 16)
+        )

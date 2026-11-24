@@ -896,3 +896,86 @@ def test_application_honors_data_dir_override(monkeypatch, tmp_path, qt_app):
         assert application.config.db_path.is_file()
     finally:
         application.shutdown()
+
+
+# ---------- 录制状态与通知 ----------
+def test_room_row_shows_reconnecting_instead_of_recording(app):
+    """等待续录期间房间行显示“重连中”，不再伪装为录制中。"""
+    room_id = app.service.add_room("gui-reconnect", "重连主播")
+    table = app.main_window.room_list
+
+    app.main_window._on_recording_reconnecting(
+        room_id,
+        {"attempt": 2, "max_attempts": 5, "delay_s": 12, "error": "连接中断"},
+    )
+
+    assert table.recording_state(room_id) == "reconnecting"
+    assert table.recording(room_id) is False
+    assert "2/5" in app.main_window.status_label.text()
+
+    app.main_window._on_recording_recovered(room_id, {"attempt": 2})
+    assert table.recording_state(room_id) == "recording"
+    assert "已恢复录制" in app.main_window.status_label.text()
+
+
+def test_structured_error_marks_room_failed(app):
+    room_id = app.service.add_room("gui-failed", "失败主播")
+    table = app.main_window.room_list
+
+    app.main_window._on_recording_error_info(
+        room_id,
+        {
+            "phase": "session_failed",
+            "category": "network",
+            "retryable": False,
+            "message": "自动续录失败（已尝试 5 次）",
+        },
+    )
+
+    assert table.recording_state(room_id) == "failed"
+
+
+def test_retryable_error_does_not_mark_room_failed(app):
+    room_id = app.service.add_room("gui-retry", "可重试主播")
+    table = app.main_window.room_list
+
+    app.main_window._on_recording_error_info(
+        room_id,
+        {
+            "phase": "start_failed",
+            "category": "network",
+            "retryable": True,
+            "message": "尚未解析到直播流地址",
+        },
+    )
+
+    assert table.recording_state(room_id) == "idle"
+    assert "暂时无法录制" in app.main_window.status_label.text()
+
+
+def test_closing_overlay_lifecycle(app):
+    """关闭收尾期间显示覆盖提示，完成后移除，保留整窗禁用语义。"""
+    window = app.main_window
+    assert window._closing_overlay is None
+
+    window._show_closing_overlay()
+    overlay = window._closing_overlay
+    assert overlay is not None
+    # 离屏夹具不显示主窗口，用 isHidden 判断覆盖层自身已被 show()。
+    assert overlay.isHidden() is False
+    assert overlay.geometry().size() == window.centralWidget().rect().size()
+
+    # 重复调用不会叠加覆盖层。
+    window._show_closing_overlay()
+    assert window._closing_overlay is overlay
+
+    window._remove_closing_overlay()
+    assert window._closing_overlay is None
+
+
+def test_diagnostics_button_is_wired(app):
+    page = app.main_window.settings_page
+    assert page is not None
+    assert page.btn_diagnostics.isEnabled()
+
+

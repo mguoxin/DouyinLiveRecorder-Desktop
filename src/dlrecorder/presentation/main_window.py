@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import sys
 import threading
 import time
 from datetime import datetime
@@ -12,9 +13,12 @@ from PySide6.QtCore import QEvent, QTimer, QUrl, Qt, Signal
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QApplication,
+    QFrame,
     QHBoxLayout,
     QLabel,
     QMainWindow,
+    QProgressBar,
+    QProgressDialog,
     QStackedWidget,
     QStatusBar,
     QVBoxLayout,
@@ -28,10 +32,17 @@ from ..application.settings_service import AppSettings, SettingsService
 from ..domain.models import validate_web_rid
 from ..infrastructure.backup import prepare_restore, verify_sqlite
 from ..infrastructure.db import Database
+from ..infrastructure.diagnostics import (
+    DiagnosticsCancelled,
+    build_diagnostics_zip,
+    default_filename,
+)
 from . import icons
+from .notification_center import NotificationCenter
 from .pages import HistoryPage, LogsPage, RoomsPage, SettingsPage, Sidebar
 from .theme import ThemeManager
 from .tray import TrayController
+from .window_trace import trace as trace_window
 from .widgets import (
     AddRoomDialog,
     QtLogBridge,
@@ -84,6 +95,8 @@ class MainWindow(QMainWindow):
         self._shutdown_complete = False
         self._shutdown_thread: Optional[threading.Thread] = None
         self._shutdown_ok = True
+        self._diagnostics_running = False
+        self._closing_overlay: Optional[QFrame] = None
 
         self.setWindowTitle(f"抖音直播录制工具 v{__version__}")
         self.resize(1120, 740)
@@ -98,6 +111,13 @@ class MainWindow(QMainWindow):
         )
 
         self._build_ui()
+        self._notify = NotificationCenter(
+            tray_provider=lambda: getattr(self, "_tray", None),
+            status_writer=self.status_label.setText,
+            room_state_writer=self.room_list.set_recording_state,
+            name_provider=self._room_display_name,
+            parent=self,
+        )
         self._connect_signals()
         self._load_initial_rooms()
         self._setup_tray()
@@ -186,6 +206,9 @@ class MainWindow(QMainWindow):
             self.settings_page.settings_saved.connect(self._on_settings_saved)
             self.settings_page.backup_requested.connect(self._on_backup_database)
             self.settings_page.restore_requested.connect(self._on_restore_database)
+            self.settings_page.diagnostics_requested.connect(
+                self._on_export_diagnostics
+            )
             if self._database is None:
                 self.settings_page.btn_backup.setEnabled(False)
                 self.settings_page.btn_restore.setEnabled(False)
@@ -204,7 +227,9 @@ class MainWindow(QMainWindow):
         rec.recording_started.connect(self._on_recording_started)
         rec.recording_finished.connect(self._on_recording_finished)
         rec.recording_error.connect(self._on_recording_error)
+        rec.recording_error_info.connect(self._on_recording_error_info)
         rec.recording_reconnecting.connect(self._on_recording_reconnecting)
+        rec.recording_recovered.connect(self._on_recording_recovered)
 
         self._theme.theme_changed.connect(self._on_theme_changed)
         self.shutdown_finished.connect(
@@ -261,6 +286,7 @@ class MainWindow(QMainWindow):
             return
         self.hide()
         self.setWindowState(Qt.WindowState.WindowNoState)
+        trace_window(self, "hide_to_tray")
         if not self._tray_hint_shown:
             self._tray.show_message(
                 "已最小化到托盘",
@@ -273,6 +299,7 @@ class MainWindow(QMainWindow):
         self.setWindowState(Qt.WindowState.WindowNoState)
         self.activateWindow()
         self.raise_()
+        trace_window(self, "restore")
 
     # ------------------------------------------------------------------
     # 导航
@@ -510,11 +537,11 @@ class MainWindow(QMainWindow):
         self.room_list.set_recording(room_id, True)
         self.status_label.setText(f"直播间 {room_id} 开始录制")
         logger.info("房间 %s 开始录制: %s", room_id, snapshot.get("file_path"))
+        self._notify.on_started(room_id, snapshot)
         self._update_room_actions()
         self._refresh_summary()
 
     def _on_recording_finished(self, room_id: int, snapshot: dict) -> None:
-        self.room_list.set_recording(room_id, False)
         scope = snapshot.get("scope", "segment")
         size = snapshot.get("file_size")
         status = snapshot.get("status", "")
@@ -537,23 +564,41 @@ class MainWindow(QMainWindow):
             size,
             snapshot.get("file_path"),
         )
+        self._notify.on_finished(room_id, snapshot)
         if self.pages.currentIndex() == PAGE_HISTORY:
             self._refresh_history()
         self._update_room_actions()
         self._refresh_summary()
 
     def _on_recording_error(self, room_id: int, message: str) -> None:
-        self.room_list.set_recording(room_id, False)
+        # 兼容信号只负责状态栏文本；房间行与通知由结构化信号驱动。
         self.status_label.setText(f"直播间 {room_id} 录制错误: {message}")
         self._update_room_actions()
         self._refresh_summary()
 
+    def _on_recording_error_info(self, room_id: int, payload: dict) -> None:
+        logger.warning(
+            "房间 %s 录制错误 phase=%s category=%s retryable=%s",
+            room_id,
+            payload.get("phase"),
+            payload.get("category"),
+            payload.get("retryable"),
+        )
+        self._notify.on_error(room_id, payload)
+
     def _on_recording_reconnecting(self, room_id: int, snapshot: dict) -> None:
-        self.room_list.set_recording(room_id, True)
+        attempt = snapshot.get("attempt", 1)
+        max_attempts = snapshot.get("max_attempts", 1)
+        self.room_list.set_recording_state(
+            room_id,
+            "reconnecting",
+            attempt=int(attempt),
+            max_attempts=int(max_attempts),
+        )
         self.status_label.setText(
             f"直播间 {room_id} 录制中断，"
             f"{snapshot.get('delay_s', 0):.0f} 秒后自动续录"
-            f"（第 {snapshot.get('attempt', 1)}/{snapshot.get('max_attempts', 1)} 次）"
+            f"（第 {attempt}/{max_attempts} 次）"
         )
         logger.warning(
             "房间 %s 录制中断，准备第 %s 次自动续录: %s",
@@ -561,6 +606,24 @@ class MainWindow(QMainWindow):
             snapshot.get("attempt"),
             snapshot.get("error"),
         )
+        self._notify.on_reconnecting(room_id, snapshot)
+
+    def _on_recording_recovered(self, room_id: int, snapshot: dict) -> None:
+        logger.info(
+            "房间 %s 录制已恢复（第 %s 次重连）",
+            room_id,
+            snapshot.get("attempt"),
+        )
+        self._notify.on_recovered(room_id, snapshot)
+
+    def _room_display_name(self, room_id: int) -> str:
+        try:
+            room = self._service.get_room(room_id)
+        except Exception:  # noqa: BLE001 - 名称解析失败不影响通知
+            room = None
+        if room is None:
+            return str(room_id)
+        return room.display_name or room.web_rid or str(room_id)
 
     def _on_auto_record_toggled(self, enabled: bool) -> None:
         self._auto_record = enabled
@@ -664,6 +727,125 @@ class MainWindow(QMainWindow):
             return
         show_info(self, "备份完成", f"数据库已备份到：\n{dest}")
 
+    def _on_export_diagnostics(self) -> None:
+        """用户主动导出诊断包；全程本地生成，不上传。"""
+        if self._diagnostics_running:
+            return
+        if not ask_confirm(
+            self,
+            "导出诊断报告",
+            "将生成一份仅保存在本机的诊断包，用于排查问题。",
+            informative=(
+                "包含：软件版本与运行环境、最近错误日志、FFmpeg 信息、"
+                "数据库完整性检查结果。\n"
+                "不包含：Cookie/令牌、完整直播流地址、数据库记录、"
+                "用户名或私人路径。\n"
+                "不会自动上传或发送到网络。"
+            ),
+            ok_text="继续导出",
+            cancel_text="取消",
+        ):
+            return
+
+        if self._database is not None:
+            default_dir = self._database.db_path.parent / "diagnostics"
+        elif self._log_dir is not None:
+            default_dir = self._log_dir.parent / "diagnostics"
+        else:
+            default_dir = Path.cwd() / "diagnostics"
+        try:
+            default_dir.mkdir(parents=True, exist_ok=True)
+        except OSError as e:
+            show_warning(self, "无法导出", f"诊断目录不可用：{e}")
+            return
+        path = choose_save_file(
+            self,
+            "导出诊断报告",
+            str(default_dir / default_filename()),
+            ["ZIP 压缩包 (*.zip)"],
+        )
+        if not path:
+            return
+
+        settings: Optional[AppSettings] = None
+        if self._settings_service is not None:
+            try:
+                settings = self._settings_service.load()
+            except Exception:  # noqa: BLE001 - 设置读取失败不阻断导出
+                logger.debug("读取设置失败，诊断报告将省略配置摘要", exc_info=True)
+        try:
+            active_rooms = len(self._recording.active_rooms())
+        except Exception:  # noqa: BLE001
+            active_rooms = 0
+
+        cancel_event = threading.Event()
+        result: dict = {}
+        data_dir = (
+            self._database.db_path.parent
+            if self._database is not None
+            else (self._log_dir.parent if self._log_dir is not None else Path.cwd())
+        )
+        ffmpeg_path = settings.ffmpeg_path if settings is not None else ""
+
+        def worker() -> None:
+            try:
+                result["path"] = build_diagnostics_zip(
+                    Path(path),
+                    app_version=__version__,
+                    data_dir=data_dir,
+                    log_dir=self._log_dir,
+                    settings=settings,
+                    ffmpeg_path=ffmpeg_path,
+                    active_rooms=active_rooms,
+                    frozen=bool(getattr(sys, "frozen", False)),
+                    cancel_event=cancel_event,
+                )
+            except DiagnosticsCancelled:
+                result["cancelled"] = True
+            except Exception as e:  # noqa: BLE001 - 失败必须转为可读提示
+                logger.exception("诊断导出失败")
+                result["error"] = str(e)
+
+        self._diagnostics_running = True
+        progress = QProgressDialog("正在生成诊断报告…", "取消", 0, 0, self)
+        progress.setWindowTitle("导出诊断报告")
+        progress.setWindowModality(Qt.WindowModality.ApplicationModal)
+        progress.setMinimumDuration(0)
+        progress.setAutoClose(False)
+        progress.setAutoReset(False)
+        progress.canceled.connect(cancel_event.set)
+
+        worker_thread = threading.Thread(
+            target=worker, name="diagnostics-export", daemon=True
+        )
+        poll = QTimer(self)
+        poll.setInterval(100)
+
+        def check_finished() -> None:
+            if worker_thread.is_alive():
+                return
+            poll.stop()
+            self._diagnostics_running = False
+            progress.close()
+            if "path" in result:
+                self.status_label.setText("诊断报告已导出")
+                show_info(
+                    self,
+                    "导出完成",
+                    f"诊断报告已保存到：\n{result['path']}",
+                )
+            elif result.get("cancelled"):
+                self.status_label.setText("诊断导出已取消")
+            else:
+                show_warning(
+                    self, "导出失败", result.get("error") or "未知错误"
+                )
+
+        poll.timeout.connect(check_finished)
+        worker_thread.start()
+        poll.start()
+        progress.show()
+
     def _on_restore_database(self) -> None:
         if self._database is None:
             return
@@ -738,6 +920,7 @@ class MainWindow(QMainWindow):
             self.settings_page.set_theme_tokens(tokens)
             self.settings_page.sync_theme()
         self.sidebar.set_theme_note(self._theme.effective_label())
+        trace_window(self, "theme_applied", theme=self._theme.effective_label())
         QTimer.singleShot(0, lambda: self._theme.refresh_title_bar(self))
 
     def detach_logging(self) -> None:
@@ -746,6 +929,7 @@ class MainWindow(QMainWindow):
 
     def dispose(self) -> None:
         """应用退出时释放托盘与日志桥接（可重复调用）。"""
+        self._notify.dispose()
         if self._tray is not None:
             self._tray.dispose()
             self._tray = None
@@ -757,15 +941,34 @@ class MainWindow(QMainWindow):
     def showEvent(self, event) -> None:  # type: ignore[override]
         super().showEvent(event)
         self._theme.refresh_title_bar(self)
+        trace_window(self, "show")
+
+    def hideEvent(self, event) -> None:  # type: ignore[override]
+        trace_window(self, "hide")
+        super().hideEvent(event)
+
+    def resizeEvent(self, event) -> None:  # type: ignore[override]
+        super().resizeEvent(event)
+        central = self.centralWidget()
+        if self._closing_overlay is not None and central is not None:
+            self._closing_overlay.setGeometry(central.geometry())
 
     def changeEvent(self, event) -> None:  # type: ignore[override]
-        if (
-            event.type() == QEvent.Type.WindowStateChange
-            and self.isMinimized()
-            and self._tray is not None
-            and not self._closing
-        ):
-            QTimer.singleShot(0, self._hide_to_tray)
+        if event.type() == QEvent.Type.WindowStateChange:
+            trace_window(
+                self,
+                "window_state_change",
+                minimized=self.isMinimized(),
+                maximized=self.isMaximized(),
+            )
+            if (
+                self.isMinimized()
+                and self._tray is not None
+                and not self._closing
+            ):
+                QTimer.singleShot(0, self._hide_to_tray)
+        elif event.type() == QEvent.Type.ScreenChangeInternal:
+            trace_window(self, "screen_change")
         super().changeEvent(event)
 
     def closeEvent(self, event) -> None:  # type: ignore[override]
@@ -776,11 +979,18 @@ class MainWindow(QMainWindow):
             self.isVisible(),
             self.isMinimized(),
         )
+        trace_window(
+            self,
+            "close_requested",
+            shutdown_complete=self._shutdown_complete,
+            shutdown_started=self._shutdown_started,
+        )
         if self._shutdown_complete:
             event.accept()
             return
         if self._shutdown_started:
             # 关闭已在后台进行，忽略重复关闭请求，避免并发停止。
+            trace_window(self, "close_ignored_duplicate")
             event.ignore()
             return
         active = []
@@ -802,11 +1012,13 @@ class MainWindow(QMainWindow):
             cancel_text="继续录制",
             danger=True,
         ):
+            trace_window(self, "close_cancelled", active=len(active))
             event.ignore()
             return
 
         self._closing = True
         self._shutdown_started = True
+        trace_window(self, "close_accepted", active=len(active))
         logger.info("主窗口关闭，开始后台退出（录制中房间=%s）", active)
         # 后台停止期间保持窗口可见并给出明确状态，避免用户误以为程序卡死。
         if not self.isVisible():
@@ -815,6 +1027,9 @@ class MainWindow(QMainWindow):
         central = self.centralWidget()
         if central is not None:
             central.setEnabled(False)
+        # 覆盖式提示：保留原有的整窗禁用语义，同时明确告知“正在退出”，
+        # 避免灰色禁用态被误判为窗口空白或卡死。
+        self._show_closing_overlay()
         event.ignore()
         self._shutdown_thread = threading.Thread(
             target=self._shutdown_worker,
@@ -837,6 +1052,52 @@ class MainWindow(QMainWindow):
         )
         self.status_label.setText("仍在停止录制与监控，请稍候…")
         QTimer.singleShot(30_000, self._on_shutdown_slow)
+
+    def _show_closing_overlay(self) -> None:
+        """关闭收尾期间显示覆盖层，明确“正在退出”而不是空白/卡死。"""
+        central = self.centralWidget()
+        if central is None or self._closing_overlay is not None:
+            return
+        # 覆盖层挂在主窗口上而非 central 下，避免继承“禁用”状态导致进度条不刷新。
+        overlay = QFrame(self)
+        overlay.setObjectName("ClosingOverlay")
+        overlay.setStyleSheet(
+            "QFrame#ClosingOverlay { background-color: rgba(16, 20, 28, 190); }"
+            "QLabel#ClosingOverlayText { color: #f5f7fa; font-size: 15px; }"
+            "QProgressBar { border: 1px solid rgba(255, 255, 255, 110);"
+            " border-radius: 4px; background: rgba(255, 255, 255, 30);"
+            " max-height: 8px; }"
+            "QProgressBar::chunk { background-color: #4c9aff; border-radius: 4px; }"
+        )
+        layout = QVBoxLayout(overlay)
+        layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.setSpacing(14)
+        label = QLabel("正在安全停止录制与监控，请稍候…", overlay)
+        label.setObjectName("ClosingOverlayText")
+        label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        bar = QProgressBar(overlay)
+        bar.setRange(0, 0)
+        bar.setTextVisible(False)
+        bar.setFixedWidth(240)
+        layout.addWidget(label)
+        layout.addWidget(bar, alignment=Qt.AlignmentFlag.AlignCenter)
+        overlay.setGeometry(central.geometry())
+        overlay.raise_()
+        overlay.show()
+        self._closing_overlay = overlay
+        trace_window(self, "closing_overlay_shown")
+
+    def _remove_closing_overlay(self) -> None:
+        overlay = self._closing_overlay
+        if overlay is None:
+            return
+        self._closing_overlay = None
+        try:
+            overlay.hide()
+            overlay.deleteLater()
+        except Exception:  # noqa: BLE001 - 退出路径不得因 UI 清理失败中断
+            logger.debug("移除关闭覆盖层失败", exc_info=True)
+        trace_window(self, "closing_overlay_removed")
 
     def _shutdown_worker(self) -> None:
         """在后台线程停止录制与监控；结果经 QueuedConnection 回到主线程。"""
@@ -866,6 +1127,8 @@ class MainWindow(QMainWindow):
         self._shutdown_ok = ok
         self._shutdown_complete = True
         logger.info("关闭收尾完成 ok=%s", ok)
+        trace_window(self, "close_finished", ok=ok)
+        self._remove_closing_overlay()
         central = self.centralWidget()
         if central is not None:
             central.setEnabled(True)
