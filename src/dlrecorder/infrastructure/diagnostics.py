@@ -24,33 +24,27 @@ from io import BytesIO
 from pathlib import Path
 from typing import Any, Callable, Optional
 
+from .redaction import (
+    ANSI_RE as _ANSI_RE,
+    EMAIL_RE as _EMAIL_RE,
+    HEADER_RE as _HEADER_RE,
+    IPV4_RE as _IPV4_RE,
+    PLACEHOLDER as _PLACEHOLDER,
+    ROOM_ID_RE as _ROOM_ID_RE,
+    SECRET_RE as _SECRET_RE,
+    URL_RE as _URL_RE,
+    WIN_PATH_RE as _WIN_PATH_RE,
+    redact_text,
+)
+
 logger = logging.getLogger(__name__)
 
 MAX_ZIP_BYTES = 1024 * 1024
 MAX_APP_ERRORS_BYTES = 256 * 1024
 MAX_FFMPEG_TAIL_BYTES = 128 * 1024
 MAX_FFMPEG_TAIL_LINES = 200
-MAX_LINE_CHARS = 2000
 MAX_ERROR_LINES_REPORTED = 20
 
-_PLACEHOLDER = "<redacted>"
-_SECRET_KEYS = (
-    r"a_bogus|x[_-]bogus|mstoken|ms_token|sessionid(?:_ss)?|session_key|"
-    r"ttwid|signature|sign|access_token|refresh_token|token|auth_key|"
-    r"expire|x-expires|x-signature|authorization|cookie|password"
-)
-_URL_RE = re.compile(r"https?://\S+", re.IGNORECASE)
-_HEADER_RE = re.compile(
-    r"(?i)\b(cookie|set-cookie|authorization|proxy-authorization)\s*:\s*[^\r\n]*"
-)
-_SECRET_RE = re.compile(
-    rf"(?i)\b({_SECRET_KEYS})\b\s*[=:]\s*([^\s&,;\"']+)"
-)
-_EMAIL_RE = re.compile(r"[\w.+-]+@[\w-]+\.[\w.-]+")
-_IPV4_RE = re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b")
-_WIN_PATH_RE = re.compile(r"[A-Za-z]:\\[^\s\"'<>|]+")
-_ROOM_ID_RE = re.compile(r"\b\d{10,}\b")
-_ANSI_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 _ERROR_LINE_RE = re.compile(r"\[(WARNING|ERROR|CRITICAL)\]")
 
 
@@ -81,39 +75,6 @@ def _scan_leak(text: str, user_home: str) -> bool:
     if _IPV4_RE.search(text):
         return True
     return False
-
-
-def redact_text(
-    text: str,
-    *,
-    user_home: str = "",
-    data_dir: Optional[Path] = None,
-) -> str:
-    """按固定顺序脱敏单行文本；结果幂等。"""
-    line = _ANSI_RE.sub("", text or "")
-    if data_dir is not None:
-        for variant in {str(data_dir), str(data_dir).replace("\\", "/")}:
-            if variant:
-                line = line.replace(variant, "<data>")
-    if user_home:
-        for variant in {user_home, user_home.replace("\\", "/")}:
-            if variant:
-                line = line.replace(variant, "%USERPROFILE%")
-    line = _URL_RE.sub("<url>", line)
-    line = _HEADER_RE.sub(lambda m: f"{m.group(1)}: {_PLACEHOLDER}", line)
-    line = _SECRET_RE.sub(lambda m: f"{m.group(1)}={_PLACEHOLDER}", line)
-    line = _EMAIL_RE.sub("<email>", line)
-    line = _IPV4_RE.sub("<ip>", line)
-    line = _WIN_PATH_RE.sub("<path>", line)
-
-    def _mask_room(match: re.Match[str]) -> str:
-        raw = match.group(0)
-        return f"{raw[:2]}{'*' * (len(raw) - 4)}{raw[-2:]}"
-
-    line = _ROOM_ID_RE.sub(_mask_room, line)
-    if len(line) > MAX_LINE_CHARS:
-        line = line[:MAX_LINE_CHARS] + "…<truncated>"
-    return line
 
 
 def _redact_obj(value: Any, *, user_home: str, data_dir: Path) -> Any:
