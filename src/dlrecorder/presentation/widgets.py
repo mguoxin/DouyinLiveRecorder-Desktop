@@ -51,6 +51,7 @@ from ..application.settings_service import (
 )
 from ..domain.models import validate_display_name, validate_web_rid
 from ..infrastructure.ffmpeg import probe_ffmpeg
+from ..infrastructure.redaction import RedactingFormatter
 from . import icons
 from .theme import (
     LIGHT,
@@ -577,10 +578,16 @@ class QtLogBridge(QObject):  # type: ignore[name-defined]
 
     log_emitted = Signal(int, str)
 
-    def __init__(self) -> None:
+    def __init__(self, *, user_home: str = "", data_dir: str = "") -> None:
         super().__init__()
         self._closed = False
         self._handler = _QtLogHandler(self)
+        # 界面日志与文件/控制台使用同一套脱敏规则，避免 GUI 成为脱敏旁路。
+        self._handler.setFormatter(
+            RedactingFormatter(
+                "%(message)s", user_home=user_home, data_dir=data_dir
+            )
+        )
         logging.getLogger().addHandler(self._handler)
 
     @property

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import sys
 import threading
 import time
@@ -104,7 +105,10 @@ class MainWindow(QMainWindow):
         self.setWindowIcon(icons.app_icon())
 
         # 日志桥接（处理器由 QtLogBridge 自行挂载，关闭时必须解除）
-        self._log_bridge = QtLogBridge()
+        self._log_bridge = QtLogBridge(
+            user_home=os.path.expanduser("~"),
+            data_dir=str(Path(self._log_dir).parent) if self._log_dir else "",
+        )
 
         self._theme = theme_manager or ThemeManager(
             QApplication.instance(), database, self

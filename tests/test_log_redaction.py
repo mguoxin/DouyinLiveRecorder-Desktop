@@ -6,6 +6,8 @@ import os
 import zipfile
 from pathlib import Path
 
+import pytest
+
 from dlrecorder.infrastructure.diagnostics import build_diagnostics_zip
 from dlrecorder.infrastructure.logging_config import setup_logging
 from dlrecorder.infrastructure.redaction import (
@@ -344,3 +346,221 @@ def test_diagnostic_export_consistent_with_log_redaction(tmp_path: Path):
 def test_normal_log_line_is_not_over_masked():
     text = "监控开始 房间=示例 状态=直播中 大小=524288 耗时=12.5s"
     assert redact_log_text(text) == text
+
+
+# ---------------------------------------------------------------------------
+# 第四轮：F-1 多路径不得泄露第二个路径的用户名
+# ---------------------------------------------------------------------------
+def test_multi_path_does_not_leak_second_home_username():
+    # 第三轮复核报告的原始回归样本
+    text = r"D:\a.ts 与 C:\Users\张三 三\secret.ts"
+    out = redact_log_text(text, user_home=CN_HOME)
+    assert out == r"<path> 与 %USERPROFILE%\secret.ts"
+    assert "张三" not in out
+    assert "Users" not in out
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        r"D:\a.ts,E:\b.ts",
+        r"D:\a.ts;E:\b.ts",
+        r"D:\a.ts, E:\b.ts",
+        r"D:\a.ts; E:\b.ts",
+        r"D:\a.ts，E:\b.ts",
+        r"D:\a.ts 与 E:\b.ts",
+    ],
+)
+def test_multi_path_separators_are_all_masked(text):
+    out = redact_log_text(text)
+    assert "D:" not in out
+    assert "E:" not in out
+    assert out.count("<path>") == 2
+
+
+def test_multi_path_three_paths():
+    text = r"D:\a.ts，E:\b.ts，F:\c.ts"
+    out = redact_log_text(text)
+    assert out == "<path>，<path>，<path>"
+
+
+def test_multi_path_mixed_home_and_non_home():
+    text = r"first=D:\a.ts second=C:\Users\张三 三\Desktop\张三 三\b.log"
+    out = redact_log_text(text, user_home=CN_HOME)
+    assert "张三" not in out
+    assert out == r"first=<path> second=%USERPROFILE%\Desktop\<user>\b.log"
+
+
+def test_multi_path_forward_slashes_with_home():
+    text = "D:/a.ts and C:/Users/张三 三/secret.ts"
+    out = redact_log_text(text, user_home=CN_HOME)
+    assert "张三" not in out
+    assert out.endswith(r"%USERPROFILE%\secret.ts")
+
+
+def test_multi_path_idempotent():
+    text = r"D:\a.ts 与 C:\Users\张三 三\secret.ts"
+    once = redact_log_text(text, user_home=CN_HOME)
+    assert redact_log_text(once, user_home=CN_HOME) == once
+
+
+# ---------------------------------------------------------------------------
+# 第四轮：F-2 路径不得吞并后续诊断字段
+# ---------------------------------------------------------------------------
+def test_path_does_not_swallow_structured_fields():
+    text = r"C:\record\a.ts code=1 status=ok ts=1764200000"
+    out = redact_log_text(text)
+    assert out == "<path> code=1 status=ok ts=1764200000"
+
+
+def test_path_does_not_swallow_bare_timestamp():
+    out = redact_log_text(r"D:\a.ts 1764200000")
+    assert out == "<path> 1764200000"
+
+
+@pytest.mark.parametrize(
+    "text,expected_tail",
+    [
+        (r"D:\a.ts, code=1", ", code=1"),
+        (r"D:\a.ts; error=1", "; error=1"),
+        (r"D:\a.ts; status=fail ts=1764200000", "; status=fail ts=1764200000"),
+    ],
+)
+def test_path_followed_by_fields_keeps_tail(text, expected_tail):
+    out = redact_log_text(text)
+    assert out.startswith("<path>")
+    assert out.endswith(expected_tail)
+
+
+def test_path_with_legal_spaces_keeps_fields():
+    out = redact_log_text(r"C:\Program Files\My App\a.ts code=1")
+    assert out == "<path> code=1"
+
+
+def test_multi_path_with_fields():
+    out = redact_log_text(r"D:\a.ts E:\b.ts code=1 status=ok")
+    assert out == "<path> <path> code=1 status=ok"
+
+
+# ---------------------------------------------------------------------------
+# 第四轮：F-4 复合敏感键名
+# ---------------------------------------------------------------------------
+@pytest.mark.parametrize(
+    "text",
+    [
+        "cookie_value=abc123",
+        "cookie_value:abc123",
+        "access_token=abc123",
+        "refresh_token=abc123",
+        "session_id=abc123",
+        "sessionid=abc123",
+        "api_key=abc123",
+        "x-api-key=abc123",
+        "Authorization=Bearer abc123",
+        "TOKEN=abc123",
+    ],
+)
+def test_composite_secret_keys_are_redacted(text):
+    out = redact_log_text(text)
+    assert "abc123" not in out, out
+    assert "<redacted>" in out
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "session_count=3",
+        "tokenizer=3",
+        "cookie_count=5",
+        "session_timeout=30",
+        "name_x=abc",
+    ],
+)
+def test_lookalike_keys_are_not_masked(text):
+    assert redact_log_text(text) == text
+
+
+def test_multiple_secret_pairs_in_one_token():
+    out = redact_log_text("a=1&token=abc123&cookie=def456")
+    assert "abc123" not in out
+    assert "def456" not in out
+    assert out.startswith("a=1&token=<redacted>&cookie=<redacted>")
+
+
+# ---------------------------------------------------------------------------
+# 第四轮：F-5 整体百分号编码 URL
+# ---------------------------------------------------------------------------
+@pytest.mark.parametrize(
+    "text",
+    [
+        "https%3A%2F%2Fpull.example.com%2Flive.ts%3Ftoken%3Dabc",
+        "HTTPS%3A%2F%2Fpull.example.com%2Flive.ts%3Ftoken%3Dabc",
+        "url=https%3A%2F%2Fa.example.com%2Fx%3Ftoken%3Dabc",
+    ],
+)
+def test_encoded_url_is_redacted(text):
+    out = redact_log_text(text)
+    assert "<url>" in out
+    assert "example.com" not in out
+    assert "abc" not in out
+
+
+def test_non_url_percent_encoding_is_untouched():
+    text = "progress=50%25 note=not%20a%20url"
+    assert redact_log_text(text) == text
+
+
+# ---------------------------------------------------------------------------
+# 第四轮：F-6 房间标识标签变体
+# ---------------------------------------------------------------------------
+@pytest.mark.parametrize(
+    "text",
+    [
+        "room=123456789",
+        "room_id=123456789",
+        "room-id=123456789",
+        "room id=123456789",
+        "roomid=123456789",
+        "web-rid=123456789",
+        "live_room_id=123456789",
+        "anchor-id=123456789",
+        "ROOM_ID=123456789",
+    ],
+)
+def test_identifier_label_variants_are_masked(text):
+    out = redact_text(text)
+    assert "123456789" not in out, out
+    assert "*" in out
+
+
+def test_b5_numbers_still_readable():
+    text = "size=1234567890 ts=1764200000 elapsed=1234567 exit=4294967295"
+    assert redact_text(text) == text
+
+
+# ---------------------------------------------------------------------------
+# 第四轮：F-3 GUI 日志处理器必须脱敏
+# ---------------------------------------------------------------------------
+def test_qt_log_bridge_redacts_emitted_messages(qt_app):
+    from dlrecorder.presentation.widgets import QtLogBridge
+
+    bridge = QtLogBridge(user_home=CN_HOME)
+    captured: list[str] = []
+    bridge.log_emitted.connect(lambda _lv, msg: captured.append(msg))
+    try:
+        assert isinstance(bridge.handler.formatter, RedactingFormatter)
+        logging.getLogger("test.gui.redaction").warning(
+            "路径 %s url https://a.example.com/x?token=abc123",
+            r"C:\Users\张三 三\Desktop\张三 三\a.ts",
+        )
+        qt_app.processEvents()
+    finally:
+        bridge.close()
+    assert captured
+    joined = "\n".join(captured)
+    assert "C:\\Users" not in joined
+    assert "张三" not in joined
+    assert "abc123" not in joined
+    assert "%USERPROFILE%" in joined
+    assert "<user>" in joined
+    assert "<url>" in joined
