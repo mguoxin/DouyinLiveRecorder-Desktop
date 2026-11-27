@@ -509,8 +509,10 @@ def test_unknown_status_retry_is_bounded(env, qt_app):
     service.recording_finished.connect(lambda rid, snap: finished.append(snap))
 
     service.start_recording(env.room_id, "https://example.invalid/live.flv")
+    # 先等本轮结束事件，确保 start 命令已被管理线程处理；
+    # 仅等 is_recording 为 False 会在命令入队前就成立，导致断言竞态。
+    _wait_for(qt_app, lambda: bool(finished), timeout=20)
     _wait_for(qt_app, lambda: not service.is_recording(env.room_id), timeout=20)
-    time.sleep(0.3)
     qt_app.processEvents()
 
     assert len(started) == 1
