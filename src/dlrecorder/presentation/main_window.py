@@ -28,6 +28,7 @@ from PySide6.QtWidgets import (
 
 from .. import __version__
 from ..application.monitor_service import MonitorService
+from ..application.recording_library_service import RecordingLibraryService
 from ..application.recording_service import RecordingService
 from ..application.settings_service import AppSettings, SettingsService
 from ..domain.models import validate_web_rid
@@ -39,6 +40,7 @@ from ..infrastructure.diagnostics import (
     default_filename,
 )
 from . import icons
+from .library_page import LibraryPage
 from .notification_center import NotificationCenter
 from .pages import HistoryPage, LogsPage, RoomsPage, SettingsPage, Sidebar
 from .theme import ThemeManager
@@ -59,8 +61,9 @@ logger = logging.getLogger(__name__)
 
 PAGE_ROOMS = 0
 PAGE_HISTORY = 1
-PAGE_LOGS = 2
-PAGE_SETTINGS = 3
+PAGE_LIBRARY = 2
+PAGE_LOGS = 3
+PAGE_SETTINGS = 4
 
 
 class MainWindow(QMainWindow):
@@ -146,6 +149,14 @@ class MainWindow(QMainWindow):
         self.pages.setObjectName("ContentRoot")
         self.rooms_page = RoomsPage(self._auto_record)
         self.history_page = HistoryPage()
+        self.library_page: Optional[LibraryPage] = None
+        if self._database is not None:
+            self.library_service = RecordingLibraryService(
+                self._database,
+                recordings_dir_provider=lambda: self._recording.output_dir,
+                archive_dir_provider=self._archive_dir,
+            )
+            self.library_page = LibraryPage(self.library_service)
         self.logs_page = LogsPage()
         if self._settings_service is not None:
             current = self._settings_service.load()
@@ -166,6 +177,16 @@ class MainWindow(QMainWindow):
             placeholder_layout.addStretch(1)
         self.pages.addWidget(self.rooms_page)
         self.pages.addWidget(self.history_page)
+        if self.library_page is not None:
+            self.pages.addWidget(self.library_page)
+        else:
+            no_library = QWidget()
+            no_library_layout = QVBoxLayout(no_library)
+            no_library_label = QLabel("当前运行方式未启用录制库。")
+            no_library_label.setObjectName("Muted")
+            no_library_layout.addWidget(no_library_label)
+            no_library_layout.addStretch(1)
+            self.pages.addWidget(no_library)
         self.pages.addWidget(self.logs_page)
         self.pages.addWidget(
             self.settings_page if self.settings_page is not None else placeholder
@@ -315,6 +336,8 @@ class MainWindow(QMainWindow):
         self.pages.setCurrentIndex(index)
         if index == PAGE_HISTORY:
             self._refresh_history()
+        elif index == PAGE_LIBRARY and self.library_page is not None:
+            self.library_page.reload()
         elif index == PAGE_SETTINGS and self.settings_page is not None:
             self.settings_page.sync_theme()
 
@@ -647,6 +670,15 @@ class MainWindow(QMainWindow):
             rows = []
         self.history_page.set_records(rows)
 
+    def _archive_dir(self) -> Optional[Path]:
+        if self._settings_service is None:
+            return None
+        try:
+            return self._settings_service.load().archive_root_dir
+        except Exception:  # noqa: BLE001 - 设置读取失败时按未配置处理
+            logger.warning("读取归档目录失败", exc_info=True)
+            return None
+
     def _on_show_history(self) -> None:
         self._navigate(PAGE_HISTORY)
 
@@ -919,6 +951,8 @@ class MainWindow(QMainWindow):
         self.sidebar.set_theme_tokens(tokens)
         self.rooms_page.set_theme_tokens(tokens)
         self.history_page.set_theme_tokens(tokens)
+        if self.library_page is not None:
+            self.library_page.set_theme_tokens(tokens)
         self.logs_page.set_theme_tokens(tokens)
         if self.settings_page is not None:
             self.settings_page.set_theme_tokens(tokens)

@@ -94,6 +94,7 @@ class Sidebar(QWidget):
         self._nav_specs = (
             ("rooms", "直播间"),
             ("history", "录制历史"),
+            ("history", "录制库"),
             ("logs", "运行日志"),
             ("settings", "设置"),
         )

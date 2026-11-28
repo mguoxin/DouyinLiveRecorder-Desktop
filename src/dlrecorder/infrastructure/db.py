@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any, Optional, Sequence
 
 from ..domain.models import Room
+from ..domain.recording_query import RecordingQuery
 from ..domain.states import RoomState
 
 
@@ -1119,6 +1120,118 @@ class Database:
                 "SELECT * FROM recordings WHERE id=?", (recording_id,)
             ).fetchone()
         return dict(row) if row is not None else None
+
+    # ---------- 录制库检索与统计 ----------
+    @staticmethod
+    def _recording_query_clause(query: RecordingQuery) -> tuple[str, list[Any]]:
+        clauses: list[str] = []
+        params: list[Any] = []
+        keyword = (query.keyword or "").strip()
+        if keyword:
+            escaped = (
+                keyword.replace("\\", "\\\\")
+                .replace("%", "\\%")
+                .replace("_", "\\_")
+            )
+            pattern = f"%{escaped}%"
+            clauses.append(
+                "(display_name_snapshot LIKE ? ESCAPE '\\' "
+                "OR web_rid_snapshot LIKE ? ESCAPE '\\' "
+                "OR anchor_id_snapshot LIKE ? ESCAPE '\\' "
+                "OR file_path LIKE ? ESCAPE '\\' "
+                "OR archive_path LIKE ? ESCAPE '\\')"
+            )
+            params.extend([pattern] * 5)
+        date_from = (query.date_from or "").strip()
+        if date_from:
+            clauses.append("substr(started_at, 1, 10) >= ?")
+            params.append(date_from)
+        date_to = (query.date_to or "").strip()
+        if date_to:
+            clauses.append("substr(started_at, 1, 10) <= ?")
+            params.append(date_to)
+        if query.status:
+            clauses.append("status = ?")
+            params.append(query.status)
+        if query.archive_status:
+            clauses.append("archive_status = ?")
+            params.append(query.archive_status)
+        if query.min_size > 0:
+            clauses.append("COALESCE(file_size, 0) >= ?")
+            params.append(int(query.min_size))
+        if query.max_size > 0:
+            clauses.append("COALESCE(file_size, 0) <= ?")
+            params.append(int(query.max_size))
+        where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+        return where, params
+
+    def search_recordings(self, query: RecordingQuery) -> list[dict]:
+        """按条件检索录制记录（最近优先），全部使用参数化 SQL。"""
+        where, params = self._recording_query_clause(query)
+        params.append(max(1, int(query.limit)))
+        params.append(max(0, int(query.offset)))
+        with self._lock:
+            rows = self._get_conn().execute(
+                f"SELECT * FROM recordings{where} ORDER BY id DESC LIMIT ? OFFSET ?",
+                params,
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def count_recordings(self, query: RecordingQuery) -> int:
+        where, params = self._recording_query_clause(query)
+        with self._lock:
+            row = self._get_conn().execute(
+                f"SELECT COUNT(*) AS n FROM recordings{where}", params
+            ).fetchone()
+        return int(row["n"])
+
+    def mark_recordings_deleted(self, recording_ids: Sequence[int]) -> int:
+        """把已移入回收站的录制记录标记为 deleted；录制中的记录不受影响。"""
+        ids = [int(value) for value in dict.fromkeys(recording_ids)]
+        if not ids:
+            return 0
+        placeholders = ", ".join("?" for _ in ids)
+        with self._lock:
+            cur = self._get_conn().cursor()
+            cur.execute(
+                f"UPDATE recordings SET status='deleted' "
+                f"WHERE id IN ({placeholders}) AND status != 'recording'",
+                ids,
+            )
+            return cur.rowcount
+
+    def recording_storage_stats(self) -> dict[str, Any]:
+        """按主播、日期与归档状态聚合容量；另返回总计。"""
+        with self._lock:
+            conn = self._get_conn()
+            totals = conn.execute(
+                "SELECT COUNT(*) AS n, COALESCE(SUM(file_size), 0) AS bytes "
+                "FROM recordings WHERE status != 'deleted'"
+            ).fetchone()
+            by_anchor = conn.execute(
+                "SELECT COALESCE(NULLIF(display_name_snapshot, ''), web_rid_snapshot, "
+                "'未命名') AS label, COUNT(*) AS n, COALESCE(SUM(file_size), 0) AS bytes "
+                "FROM recordings WHERE status != 'deleted' "
+                "GROUP BY label ORDER BY bytes DESC LIMIT 100"
+            ).fetchall()
+            by_date = conn.execute(
+                "SELECT substr(started_at, 1, 10) AS label, COUNT(*) AS n, "
+                "COALESCE(SUM(file_size), 0) AS bytes FROM recordings "
+                "WHERE status != 'deleted' AND started_at IS NOT NULL "
+                "GROUP BY label ORDER BY label DESC LIMIT 100"
+            ).fetchall()
+            by_archive = conn.execute(
+                "SELECT archive_status AS label, COUNT(*) AS n, "
+                "COALESCE(SUM(file_size), 0) AS bytes FROM recordings "
+                "WHERE status != 'deleted' GROUP BY archive_status"
+            ).fetchall()
+        return {
+            "total_count": int(totals["n"]),
+            "total_bytes": int(totals["bytes"]),
+            "by_anchor": [dict(row) for row in by_anchor],
+            "by_date": [dict(row) for row in by_date],
+            "by_archive": [dict(row) for row in by_archive],
+        }
 
     # ---------- 归档状态（recordings） ----------
     def set_recording_archive(
