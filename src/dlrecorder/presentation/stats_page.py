@@ -17,7 +17,9 @@ from PySide6.QtWidgets import (
     QGridLayout,
     QHBoxLayout,
     QHeaderView,
+    QInputDialog,
     QLabel,
+    QMessageBox,
     QPushButton,
     QTableWidget,
     QTableWidgetItem,
@@ -25,7 +27,14 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from .. import __version__
 from ..application.statistics_service import StatisticsService
+from ..infrastructure.update_check import (
+    UpdateCheckError,
+    UpdateInfo,
+    check_for_update,
+    describe_update,
+)
 from .library_page import human_size
 
 logger = logging.getLogger(__name__)
@@ -93,6 +102,23 @@ class _ExportWorker(QThread):
         self.done.emit(str(path))
 
 
+class _UpdateWorker(QThread):
+    done = Signal(object)
+    failed = Signal(str)
+
+    def __init__(self, url: str, parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self._url = url
+
+    def run(self) -> None:
+        try:
+            info = check_for_update(self._url, __version__)
+        except UpdateCheckError as exc:
+            self.failed.emit(str(exc))
+            return
+        self.done.emit(info)
+
+
 class StatsPage(QWidget):
     def __init__(
         self,
@@ -113,13 +139,18 @@ class StatsPage(QWidget):
         title_box = QVBoxLayout()
         title = QLabel("统计")
         title.setObjectName("PageTitle")
-        subtitle = QLabel("录制成功率、容量构成、主播录制与进程资源（只读统计）")
+        subtitle = QLabel(
+            f"版本 {__version__} · Schema {service.schema_version} · "
+            "录制成功率、容量构成、主播录制与进程资源（只读统计）"
+        )
         subtitle.setObjectName("Muted")
         title_box.addWidget(title)
         title_box.addWidget(subtitle)
         header.addLayout(title_box, 1)
         self.btn_refresh = QPushButton("刷新")
+        self.btn_update = QPushButton("检查更新…")
         self.btn_export = QPushButton("导出统计报告…")
+        header.addWidget(self.btn_update)
         header.addWidget(self.btn_refresh)
         header.addWidget(self.btn_export)
         layout.addLayout(header)
@@ -182,6 +213,8 @@ class StatsPage(QWidget):
 
         self.btn_refresh.clicked.connect(self.reload)
         self.btn_export.clicked.connect(self._export)
+        self.btn_update.clicked.connect(self._check_update)
+        self._update_worker: Optional[_UpdateWorker] = None
 
     @staticmethod
     def _make_table(columns: tuple[str, ...]) -> QTableWidget:
@@ -319,3 +352,46 @@ class StatsPage(QWidget):
 
     def _on_export_failed(self, message: str) -> None:
         self.status_label.setText(f"导出失败：{message}")
+
+    # ---------- 更新检查 ----------
+    def _check_update(self) -> None:
+        if self._update_worker is not None and self._update_worker.isRunning():
+            return
+        current = self._service.get_setting("update.feed_url", "")
+        url, accepted = QInputDialog.getText(
+            self,
+            "检查更新",
+            "更新清单 URL（JSON，例如 https://example.com/dlr/update.json）：",
+            text=current,
+        )
+        url = (url or "").strip()
+        if not accepted or not url:
+            return
+        self._service.set_setting("update.feed_url", url)
+        self.btn_update.setEnabled(False)
+        self.status_label.setText("正在检查更新…")
+        self._update_worker = _UpdateWorker(url, self)
+        self._update_worker.done.connect(self._on_update_checked)
+        self._update_worker.failed.connect(self._on_update_failed)
+        self._update_worker.finished.connect(
+            lambda: self.btn_update.setEnabled(True)
+        )
+        self._update_worker.start()
+
+    def _on_update_checked(self, info: object) -> None:
+        assert isinstance(info, UpdateInfo)
+        self.status_label.setText(describe_update(info))
+        details = describe_update(info)
+        if info.update_available and info.download_url:
+            details += f"\n\n下载地址：{info.download_url}"
+        if info.notes:
+            details += f"\n\n更新说明：\n{info.notes}"
+        details += (
+            "\n\n提示：程序不会自动下载或替换文件。升级前请先备份数据库；"
+            "若升级失败，可用“设置 → 恢复数据库”回滚。"
+        )
+        QMessageBox.information(self, "检查更新", details)
+
+    def _on_update_failed(self, message: str) -> None:
+        self.status_label.setText(f"检查更新失败：{message}")
+        QMessageBox.warning(self, "检查更新失败", message)

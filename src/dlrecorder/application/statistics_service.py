@@ -45,6 +45,16 @@ class StatisticsService:
     def db_path(self) -> Path:
         return Path(self._db.db_path)
 
+    @property
+    def schema_version(self) -> int:
+        return self._db.schema_version
+
+    def get_setting(self, key: str, default: str = "") -> str:
+        return self._db.get_setting(key, default)
+
+    def set_setting(self, key: str, value: str) -> None:
+        self._db.set_setting(key, value)
+
     # ---------- 概览 ----------
     def overview(self, now: Optional[datetime] = None) -> dict:
         moment = now or datetime.now()

@@ -397,7 +397,8 @@ class LibraryPage(QWidget):
 
         detail = QFrame()
         detail.setObjectName("Card")
-        detail.setFixedWidth(272)
+        detail.setMinimumWidth(232)
+        detail.setMaximumWidth(300)
         detail_layout = QVBoxLayout(detail)
         detail_layout.setContentsMargins(14, 12, 14, 12)
         detail_layout.setSpacing(8)
