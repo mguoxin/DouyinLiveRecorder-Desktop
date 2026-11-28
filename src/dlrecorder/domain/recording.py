@@ -22,3 +22,23 @@ class RecordingStatus(str, enum.Enum):
 
     def __str__(self) -> str:  # 便于数据库与日志输出
         return self.value
+
+
+class ArchiveStatus(str, enum.Enum):
+    """录制文件归档状态机取值。
+
+    ``NONE`` 表示未启用或从未尝试；``PENDING`` 已入队；``COPYING`` 正在复制；
+    ``VERIFYING`` 复制完成待校验；``ARCHIVED`` 目标已验证；``FAILED`` 可重试
+    失败；``SKIPPED`` 目标已存在且内容一致，去重跳过。
+    """
+
+    NONE = "none"
+    PENDING = "pending"
+    COPYING = "copying"
+    VERIFYING = "verifying"
+    ARCHIVED = "archived"
+    FAILED = "failed"
+    SKIPPED = "skipped"
+
+    def __str__(self) -> str:
+        return self.value

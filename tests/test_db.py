@@ -271,6 +271,13 @@ def _read_database_state(path: Path) -> dict:
         conn.close()
 
 
+_V3_INDEXES = {
+    "idx_recordings_archive_status",
+    "idx_archive_jobs_status",
+    "idx_archive_jobs_recording",
+}
+
+
 def _custom_object_definitions(state: dict) -> list[tuple]:
     """只筛选有定义 SQL 的自定义索引，以及用户触发器和视图。"""
     return [
@@ -281,6 +288,7 @@ def _custom_object_definitions(state: dict) -> list[tuple]:
             obj[0] == "index"
             and obj[2] in {"monitor_sessions", "recordings"}
             and obj[3] is not None
+            and obj[1] not in _V3_INDEXES
         )
     ]
 
@@ -394,7 +402,7 @@ def db(tmp_path: Path) -> Database:
 
 def test_schema_version(db: Database) -> None:
     row = db._get_conn().execute("SELECT MAX(version) AS v FROM schema_version").fetchone()
-    assert row["v"] == 2
+    assert row["v"] == 3
 
 
 def test_add_and_list_room(db: Database) -> None:
@@ -482,11 +490,11 @@ def test_persistence_across_reopen(tmp_path: Path) -> None:
     db2.close()
 
 
-def test_new_database_directly_initializes_v2(tmp_path: Path) -> None:
+def test_new_database_directly_initializes_latest_schema(tmp_path: Path) -> None:
     path = tmp_path / "fresh.db"
     db = Database(path)
     conn = db._get_conn()
-    assert conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0] == 2
+    assert conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0] == 3
     for table in ("monitor_sessions", "recordings"):
         columns = {row["name"]: row for row in conn.execute(f"PRAGMA table_info({table})")}
         assert columns["room_id"]["notnull"] == 0
@@ -494,6 +502,34 @@ def test_new_database_directly_initializes_v2(tmp_path: Path) -> None:
             "web_rid_snapshot", "display_name_snapshot",
             "anchor_id_snapshot", "snapshot_source",
         }.issubset(columns)
+    recording_columns = {
+        row["name"]: row for row in conn.execute("PRAGMA table_info(recordings)")
+    }
+    assert {
+        "archive_status", "archive_path", "archived_at",
+        "archive_error", "archive_attempts",
+    }.issubset(recording_columns)
+    assert recording_columns["archive_status"]["notnull"] == 1
+    assert recording_columns["archive_status"]["dflt_value"].strip("'\"") == "none"
+    job_columns = {
+        row["name"] for row in conn.execute("PRAGMA table_info(archive_jobs)")
+    }
+    assert {
+        "id", "recording_id", "source_path", "target_path", "status",
+        "attempts", "bytes_total", "sha256", "error", "created_at", "updated_at",
+    }.issubset(job_columns)
+    indexes = {
+        row["name"]
+        for row in conn.execute("SELECT name FROM sqlite_master WHERE type='index'")
+    }
+    assert _V3_INDEXES.issubset(indexes)
+    job_fks = conn.execute("PRAGMA foreign_key_list(archive_jobs)").fetchall()
+    assert any(
+        fk["from"] == "recording_id"
+        and fk["table"] == "recordings"
+        and fk["on_delete"] == "CASCADE"
+        for fk in job_fks
+    )
     assert not (tmp_path / "migration_backups").exists()
     db.close()
 
@@ -507,7 +543,7 @@ def test_v1_migration_preserves_history_snapshots_and_objects(tmp_path: Path) ->
     after_state = _read_database_state(path)
 
     assert _custom_object_definitions(after_state) == _custom_object_definitions(before_state)
-    assert conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0] == 2
+    assert conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0] == 3
     assert conn.execute("SELECT COUNT(*) FROM rooms").fetchone()[0] == 2
     assert conn.execute("SELECT COUNT(*) FROM monitor_sessions").fetchone()[0] == 2
     assert conn.execute("SELECT COUNT(*) FROM recordings").fetchone()[0] == 3
@@ -545,6 +581,20 @@ def test_v1_migration_preserves_history_snapshots_and_objects(tmp_path: Path) ->
     assert unknown["display_name_snapshot"] == ""
     assert unknown["anchor_id_snapshot"] == ""
     assert unknown["snapshot_source"] == "unknown"
+
+    # V3 归档字段回填：历史记录一律为 none，未归档，尝试次数 0。
+    for recording_id in (201, 202, 203):
+        archived = conn.execute(
+            "SELECT archive_status, archive_path, archived_at, archive_error,"
+            " archive_attempts FROM recordings WHERE id=?",
+            (recording_id,),
+        ).fetchone()
+        assert archived["archive_status"] == "none"
+        assert archived["archive_path"] is None
+        assert archived["archived_at"] is None
+        assert archived["archive_error"] is None
+        assert archived["archive_attempts"] == 0
+    assert conn.execute("SELECT COUNT(*) FROM archive_jobs").fetchone()[0] == 0
 
     objects = {
         (row["type"], row["name"])
@@ -673,7 +723,7 @@ def test_backup_failure_aborts_before_schema_change(
     _create_v1_database(path)
     before_state = _read_database_state(path)
 
-    def fail_backup(self) -> None:
+    def fail_backup(self, *args, **kwargs) -> None:
         raise RuntimeError("forced backup failure")
 
     monkeypatch.setattr(Database, "_create_migration_backup", fail_backup)
@@ -869,13 +919,19 @@ def test_post_commit_foreign_key_failure_reports_committed_v2(
     assert "V2 已提交" in caplog.text
     assert "事务已回滚" not in caplog.text
     assert "数据库迁移完成" not in caplog.text
-    assert _read_database_state(path) == expected_state
+
+    # V1→V2 已提交但连接被关闭，V2→V3 尚未执行。
+    conn = sqlite3.connect(path)
+    assert conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0] == 2
+    assert conn.execute("SELECT COUNT(*) FROM recordings").fetchone()[0] == 3
+    conn.close()
 
     reopened = Database(path)
     conn = reopened._get_conn()
     assert conn.execute("PRAGMA foreign_keys").fetchone()[0] == 1
-    assert conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0] == 2
+    assert conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0] == 3
     assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
+    assert _read_database_state(path) == expected_state
     reopened.close()
 
 
@@ -933,7 +989,7 @@ def test_backup_internal_failure_preserves_primary_error_and_closes_connections(
     reopened = Database(path)
     conn = reopened._get_conn()
     assert conn.execute("PRAGMA foreign_keys").fetchone()[0] == 1
-    assert conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0] == 2
+    assert conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0] == 3
     assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
     reopened.close()
 
@@ -944,12 +1000,7 @@ def test_commit_success_then_exception_reports_unknown_and_preserves_v2(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     path = tmp_path / "app.db"
-    reference_path = tmp_path / "reference.db"
     _create_v1_database(path, with_objects=True)
-    _create_v1_database(reference_path, with_objects=True)
-    reference = Database(reference_path)
-    reference.close()
-    expected_v2_state = _read_database_state(reference_path)
     caplog.clear()
 
     with caplog.at_level(logging.CRITICAL):
@@ -969,7 +1020,14 @@ def test_commit_success_then_exception_reports_unknown_and_preserves_v2(
     assert "提交结果无法确认" in caplog.text
     assert "数据库迁移完成" not in caplog.text
     assert "事务已回滚" not in caplog.text
-    assert _read_database_state(path) == expected_v2_state
+    # 提交实际成功，V1→V2 数据保留；V2→V3 因连接关闭未执行。
+    conn = sqlite3.connect(path)
+    assert conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0] == 2
+    assert conn.execute("SELECT COUNT(*) FROM recordings").fetchone()[0] == 3
+    assert conn.execute(
+        "SELECT file_path FROM recordings WHERE id=201"
+    ).fetchone()[0] == "C:/old/a.ts"
+    conn.close()
 
     conn = sqlite3.connect(path)
     assert conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0] == 2
@@ -1018,7 +1076,7 @@ def test_commit_rollback_then_exception_reports_unknown_and_preserves_v1(
     reopened = Database(path)
     conn = reopened._get_conn()
     assert conn.execute("PRAGMA foreign_keys").fetchone()[0] == 1
-    assert conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0] == 2
+    assert conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0] == 3
     assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
     assert conn.execute(
         "SELECT web_rid_snapshot FROM recordings WHERE id=202"

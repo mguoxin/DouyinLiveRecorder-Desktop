@@ -16,24 +16,32 @@ import threading
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Optional, Sequence
 
 from ..domain.models import Room
 from ..domain.states import RoomState
 
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 logger = logging.getLogger(__name__)
 
+_UNSET: Any = object()
+
 
 class MigrationPostCommitError(RuntimeError):
-    """V2 已提交，但提交后收尾失败，原连接不可继续使用。"""
+    """迁移已提交，但提交后收尾失败，原连接不可继续使用。"""
 
-    def __init__(self, message: str, *, connection_closed: bool) -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        connection_closed: bool,
+        schema_version: int = SCHEMA_VERSION,
+    ) -> None:
         super().__init__(message)
         self.migration_committed = True
-        self.schema_version = SCHEMA_VERSION
+        self.schema_version = schema_version
         self.connection_closed = connection_closed
 
 
@@ -133,12 +141,12 @@ class Database:
             }
             user_tables = tables - {"schema_version", "sqlite_sequence"}
             if current == 0 and not user_tables:
-                self._initialize_v2(conn)
+                self._initialize_v3(conn)
             else:
                 self._migrate(cur, current, SCHEMA_VERSION)
 
-    def _initialize_v2(self, conn: sqlite3.Connection) -> None:
-        """全新数据库直接建立 V2，不创建空数据库迁移备份。"""
+    def _initialize_v3(self, conn: sqlite3.Connection) -> None:
+        """全新数据库直接建立最新 Schema，不创建空数据库迁移备份。"""
         cur = conn.cursor()
         try:
             cur.execute("BEGIN")
@@ -166,12 +174,14 @@ class Database:
                 """
             )
             self._create_recordings(cur, "recordings")
+            self._create_archive_jobs(cur)
+            self._create_v3_indexes(cur)
             self._set_schema_version(cur)
             conn.commit()
         except Exception:
             if conn.in_transaction:
                 conn.rollback()
-            logger.exception("V2 数据库初始化失败，已回滚")
+            logger.exception("数据库初始化失败，已回滚")
             raise
 
     @staticmethod
@@ -197,9 +207,28 @@ class Database:
         )
 
     @staticmethod
-    def _create_recordings(cur: sqlite3.Cursor, table_name: str) -> None:
+    def _create_recordings(
+        cur: sqlite3.Cursor,
+        table_name: str,
+        *,
+        schema_version: int = SCHEMA_VERSION,
+    ) -> None:
         if table_name not in {"recordings", "new_recordings"}:
             raise ValueError("非法录制表名")
+        archive_columns = ""
+        if schema_version >= 3:
+            archive_columns = """
+                ,
+                archive_status TEXT NOT NULL DEFAULT 'none'
+                    CHECK(archive_status IN (
+                        'none', 'pending', 'copying', 'verifying',
+                        'archived', 'failed', 'skipped'
+                    )),
+                archive_path TEXT,
+                archived_at TEXT,
+                archive_error TEXT,
+                archive_attempts INTEGER NOT NULL DEFAULT 0
+            """
         cur.execute(
             f"""
             CREATE TABLE {table_name} (
@@ -216,19 +245,76 @@ class Database:
                 anchor_id_snapshot TEXT NOT NULL DEFAULT '',
                 snapshot_source TEXT NOT NULL DEFAULT 'unknown'
                     CHECK(snapshot_source IN ('captured', 'migration_backfill', 'unknown'))
+                {archive_columns}
             )
             """
         )
 
     @staticmethod
-    def _set_schema_version(cur: sqlite3.Cursor) -> None:
+    def _create_archive_jobs(cur: sqlite3.Cursor) -> None:
+        cur.execute(
+            """
+            CREATE TABLE archive_jobs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                recording_id INTEGER NOT NULL
+                    REFERENCES recordings(id) ON DELETE CASCADE,
+                source_path TEXT NOT NULL,
+                target_path TEXT,
+                status TEXT NOT NULL
+                    CHECK(status IN (
+                        'pending', 'copying', 'verifying',
+                        'archived', 'failed', 'skipped'
+                    )),
+                attempts INTEGER NOT NULL DEFAULT 0,
+                bytes_total INTEGER,
+                sha256 TEXT,
+                error TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
+
+    @staticmethod
+    def _create_v3_indexes(cur: sqlite3.Cursor) -> None:
+        cur.execute(
+            "CREATE INDEX IF NOT EXISTS idx_recordings_archive_status "
+            "ON recordings(archive_status)"
+        )
+        cur.execute(
+            "CREATE INDEX IF NOT EXISTS idx_archive_jobs_status "
+            "ON archive_jobs(status)"
+        )
+        cur.execute(
+            "CREATE INDEX IF NOT EXISTS idx_archive_jobs_recording "
+            "ON archive_jobs(recording_id)"
+        )
+
+    @staticmethod
+    def _set_schema_version(
+        cur: sqlite3.Cursor,
+        version: int = SCHEMA_VERSION,
+    ) -> None:
         cur.execute("DELETE FROM schema_version")
-        cur.execute("INSERT INTO schema_version(version) VALUES (?)", (SCHEMA_VERSION,))
+        cur.execute("INSERT INTO schema_version(version) VALUES (?)", (version,))
 
     def _migrate(self, cur: sqlite3.Cursor, from_v: int, to_v: int) -> None:
-        """在写锁和显式事务中执行 V1→V2，保留原主键及历史数据。"""
-        if to_v != 2:
+        """按版本步进执行迁移，每一步独立事务、备份与校验。"""
+        if to_v != SCHEMA_VERSION:
             raise ValueError(f"不支持的迁移目标版本: {to_v}")
+        version = from_v
+        while version < to_v:
+            if version == 1:
+                self._migrate_v1_to_v2(cur)
+                version = 2
+            elif version == 2:
+                self._migrate_v2_to_v3(cur)
+                version = 3
+            else:
+                raise ValueError(f"不支持的迁移源版本: {version}")
+
+    def _migrate_v1_to_v2(self, cur: sqlite3.Cursor) -> None:
+        """在写锁和显式事务中执行 V1→V2，保留原主键及历史数据。"""
         conn = cur.connection
         backup_path: Optional[Path] = None
         stage = "检查事务状态"
@@ -247,12 +333,12 @@ class Database:
             # 等待写锁期间可能已有其他进程完成迁移，因此重新检查版本。
             row = cur.execute("SELECT MAX(version) AS v FROM schema_version").fetchone()
             current = row["v"] if row and row["v"] is not None else 0
-            if current >= SCHEMA_VERSION:
+            if current >= 2:
                 conn.rollback()
                 return
 
             stage = "SQLite Online Backup API 一致性备份"
-            backup_path = self._create_migration_backup()
+            backup_path = self._create_migration_backup(1, 2)
             logger.info("V1→V2 迁移备份已创建并验证: %s", backup_path)
 
             stage = "保存索引、触发器、视图和自增序列"
@@ -277,7 +363,7 @@ class Database:
 
             stage = "创建 V2 临时表"
             self._create_monitor_sessions(cur, "new_monitor_sessions")
-            self._create_recordings(cur, "new_recordings")
+            self._create_recordings(cur, "new_recordings", schema_version=2)
 
             stage = "复制监控会话并补齐快照"
             cur.execute(
@@ -363,7 +449,7 @@ class Database:
                     )
 
             stage = "更新 Schema 版本"
-            self._set_schema_version(cur)
+            self._set_schema_version(cur, 2)
             stage = "验证 V2 数据、外键和数据库对象"
             self._verify_v2_migration(cur, expected_counts, objects, sequences)
             stage = "提交 V2 迁移事务"
@@ -425,6 +511,7 @@ class Database:
                             "V2 数据库迁移已经提交，但恢复外键约束失败；"
                             "当前连接不能继续安全使用",
                             connection_closed=self._conn is None,
+                            schema_version=2,
                         ) from finalization_error
                     logger.critical(
                         "迁移收尾恢复外键约束失败，原始迁移异常=%s；"
@@ -441,13 +528,13 @@ class Database:
     def _restore_foreign_keys(cur: sqlite3.Cursor) -> None:
         cur.execute("PRAGMA foreign_keys=ON")
 
-    def _create_migration_backup(self) -> Path:
+    def _create_migration_backup(self, from_v: int = 1, to_v: int = 2) -> Path:
         """在源库写锁已持有、尚未修改 schema 时进行在线一致性备份。"""
         backup_dir = self.db_path.parent / "migration_backups"
         backup_dir.mkdir(parents=True, exist_ok=True)
         stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S_%fZ")
         backup_path = backup_dir / (
-            f"{self.db_path.stem}_v1_to_v2_{stamp}_{uuid.uuid4().hex}.db"
+            f"{self.db_path.stem}_v{from_v}_to_v{to_v}_{stamp}_{uuid.uuid4().hex}.db"
         )
         source: Optional[sqlite3.Connection] = None
         destination: Optional[sqlite3.Connection] = None
@@ -552,7 +639,7 @@ class Database:
         sequences: dict[str, Any],
     ) -> None:
         version = cur.execute("SELECT MAX(version) FROM schema_version").fetchone()[0]
-        if version != SCHEMA_VERSION:
+        if version != 2:
             raise RuntimeError(f"Schema 版本错误: {version}")
         for table, expected in expected_counts.items():
             actual = cur.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
@@ -600,6 +687,184 @@ class Database:
             ).fetchone()
             if row is None or row["seq"] < old_seq:
                 raise RuntimeError(f"{table_name} 自增序列发生回退")
+
+        violations = cur.execute("PRAGMA foreign_key_check").fetchall()
+        if violations:
+            raise RuntimeError(f"外键完整性检查失败: {violations}")
+
+    _V3_ARCHIVE_COLUMNS: tuple[tuple[str, str], ...] = (
+        (
+            "archive_status",
+            "TEXT NOT NULL DEFAULT 'none' CHECK(archive_status IN ("
+            "'none', 'pending', 'copying', 'verifying', "
+            "'archived', 'failed', 'skipped'))",
+        ),
+        ("archive_path", "TEXT"),
+        ("archived_at", "TEXT"),
+        ("archive_error", "TEXT"),
+        ("archive_attempts", "INTEGER NOT NULL DEFAULT 0"),
+    )
+
+    def _migrate_v2_to_v3(self, cur: sqlite3.Cursor) -> None:
+        """V2→V3：纯增量升级，不重建既有表，事务内完成并校验。"""
+        conn = cur.connection
+        backup_path: Optional[Path] = None
+        stage = "检查事务状态"
+        commit_attempted = False
+        try:
+            if conn.in_transaction:
+                raise RuntimeError("迁移前存在未提交事务")
+            stage = "获取数据库写锁"
+            cur.execute("BEGIN IMMEDIATE")
+
+            row = cur.execute("SELECT MAX(version) AS v FROM schema_version").fetchone()
+            current = row["v"] if row and row["v"] is not None else 0
+            if current >= 3:
+                conn.rollback()
+                return
+
+            stage = "SQLite Online Backup API 一致性备份"
+            backup_path = self._create_migration_backup(2, 3)
+            logger.info("V2→V3 迁移备份已创建并验证: %s", backup_path)
+
+            expected_counts = {
+                table: cur.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+                for table in ("rooms", "monitor_sessions", "recordings", "settings")
+            }
+
+            stage = "为 recordings 增加归档字段"
+            existing_columns = {
+                info["name"]
+                for info in cur.execute("PRAGMA table_info(recordings)").fetchall()
+            }
+            for column, ddl in self._V3_ARCHIVE_COLUMNS:
+                if column in existing_columns:
+                    continue
+                cur.execute(f"ALTER TABLE recordings ADD COLUMN {column} {ddl}")
+
+            stage = "创建归档任务表与索引"
+            has_jobs = cur.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='archive_jobs'"
+            ).fetchone()
+            if has_jobs is None:
+                self._create_archive_jobs(cur)
+            self._create_v3_indexes(cur)
+
+            stage = "更新 Schema 版本"
+            self._set_schema_version(cur, 3)
+            stage = "验证 V3 数据与结构"
+            self._verify_v3_migration(cur, expected_counts)
+            stage = "提交 V3 迁移事务"
+            commit_attempted = True
+            conn.commit()
+        except Exception as exc:
+            if conn.in_transaction:
+                try:
+                    conn.rollback()
+                except Exception as rollback_error:
+                    logger.critical(
+                        "V2→V3 迁移失败且回滚失败，阶段=%s，备份=%s；"
+                        "必须保留现场并人工恢复",
+                        stage,
+                        backup_path,
+                        exc_info=True,
+                    )
+                    raise RuntimeError("迁移失败且回滚失败，禁止继续操作") from rollback_error
+                logger.exception(
+                    "V2→V3 迁移失败，阶段=%s，异常=%s，备份=%s；原数据库事务已回滚",
+                    stage,
+                    exc,
+                    backup_path,
+                )
+                raise
+            if commit_attempted:
+                logger.critical(
+                    "V2→V3 迁移提交调用异常，阶段=%s，备份=%s；"
+                    "连接已无活动事务，提交结果无法确认，禁止继续操作",
+                    stage,
+                    backup_path,
+                    exc_info=True,
+                )
+                self.close()
+                raise RuntimeError("迁移提交结果不确定，禁止继续操作") from exc
+            logger.exception(
+                "V2→V3 迁移在提交前失败，阶段=%s，异常=%s，备份=%s；"
+                "当前无活动事务，无需回滚",
+                stage,
+                exc,
+                backup_path,
+            )
+            raise
+        logger.info("V2→V3 数据库迁移完成，备份保留于: %s", backup_path)
+
+    @staticmethod
+    def _verify_v3_migration(
+        cur: sqlite3.Cursor,
+        expected_counts: dict[str, Any],
+    ) -> None:
+        version = cur.execute("SELECT MAX(version) FROM schema_version").fetchone()[0]
+        if version != 3:
+            raise RuntimeError(f"Schema 版本错误: {version}")
+
+        columns = {
+            row["name"]: row for row in cur.execute("PRAGMA table_info(recordings)").fetchall()
+        }
+        for column in ("archive_status", "archive_path", "archived_at",
+                       "archive_error", "archive_attempts"):
+            if column not in columns:
+                raise RuntimeError(f"recordings 缺少归档字段: {column}")
+        if not columns["archive_status"]["notnull"]:
+            raise RuntimeError("recordings.archive_status 必须为 NOT NULL")
+        default_value = columns["archive_status"]["dflt_value"]
+        if default_value is None or str(default_value).strip("'\"") != "none":
+            raise RuntimeError("recordings.archive_status 默认值必须为 'none'")
+        if not columns["archive_attempts"]["notnull"]:
+            raise RuntimeError("recordings.archive_attempts 必须为 NOT NULL")
+
+        job_columns = {
+            row["name"] for row in cur.execute("PRAGMA table_info(archive_jobs)").fetchall()
+        }
+        required_job_columns = {
+            "id", "recording_id", "source_path", "target_path", "status",
+            "attempts", "bytes_total", "sha256", "error",
+            "created_at", "updated_at",
+        }
+        if not required_job_columns.issubset(job_columns):
+            raise RuntimeError("archive_jobs 字段不完整")
+
+        job_fks = cur.execute("PRAGMA foreign_key_list(archive_jobs)").fetchall()
+        if not any(
+            fk["from"] == "recording_id"
+            and fk["table"] == "recordings"
+            and fk["on_delete"] == "CASCADE"
+            for fk in job_fks
+        ):
+            raise RuntimeError("archive_jobs.recording_id 外键不符合 V3 设计")
+
+        indexes = {
+            row["name"]
+            for row in cur.execute(
+                "SELECT name FROM sqlite_master WHERE type='index'"
+            ).fetchall()
+        }
+        for index in (
+            "idx_recordings_archive_status",
+            "idx_archive_jobs_status",
+            "idx_archive_jobs_recording",
+        ):
+            if index not in indexes:
+                raise RuntimeError(f"V3 索引缺失: {index}")
+
+        for table, expected in expected_counts.items():
+            actual = cur.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+            if actual != expected:
+                raise RuntimeError(f"{table} 迁移后记录数不一致: {actual} != {expected}")
+
+        not_backfilled = cur.execute(
+            "SELECT COUNT(*) FROM recordings WHERE archive_status != 'none'"
+        ).fetchone()[0]
+        if not_backfilled:
+            raise RuntimeError(f"{not_backfilled} 条录制记录未完成归档状态回填")
 
         violations = cur.execute("PRAGMA foreign_key_check").fetchall()
         if violations:
@@ -854,3 +1119,148 @@ class Database:
                 "SELECT * FROM recordings WHERE id=?", (recording_id,)
             ).fetchone()
         return dict(row) if row is not None else None
+
+    # ---------- 归档状态（recordings） ----------
+    def set_recording_archive(
+        self,
+        recording_id: int,
+        status: str,
+        *,
+        archive_path: Any = _UNSET,
+        archived_at: Any = _UNSET,
+        error: Any = _UNSET,
+        increment_attempts: bool = False,
+        expected_status: Optional[str] = None,
+    ) -> bool:
+        """更新录制记录的归档状态；``expected_status`` 提供乐观并发保护。"""
+        updates = ["archive_status=?"]
+        params: list[Any] = [status]
+        if archive_path is not _UNSET:
+            updates.append("archive_path=?")
+            params.append(archive_path)
+        if archived_at is not _UNSET:
+            updates.append("archived_at=?")
+            params.append(archived_at)
+        if error is not _UNSET:
+            updates.append("archive_error=?")
+            params.append(error)
+        if increment_attempts:
+            updates.append("archive_attempts=archive_attempts+1")
+
+        where = "id=?"
+        params.append(recording_id)
+        if expected_status is not None:
+            where += " AND archive_status=?"
+            params.append(expected_status)
+        with self._lock:
+            cur = self._get_conn().cursor()
+            cur.execute(f"UPDATE recordings SET {', '.join(updates)} WHERE {where}", params)
+            return cur.rowcount == 1
+
+    def list_recordings_by_archive_status(
+        self,
+        statuses: Sequence[str],
+        limit: int = 500,
+    ) -> list[dict]:
+        """按归档状态返回录制记录（最近优先），用于启动恢复与重试。"""
+        values = tuple(str(status) for status in statuses)
+        if not values:
+            return []
+        placeholders = ", ".join("?" for _ in values)
+        params: list[Any] = list(values)
+        params.append(max(1, int(limit)))
+        with self._lock:
+            rows = self._get_conn().execute(
+                f"SELECT * FROM recordings WHERE archive_status IN ({placeholders}) "
+                "ORDER BY id DESC LIMIT ?",
+                params,
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    # ---------- 归档任务（archive_jobs） ----------
+    def create_archive_job(
+        self,
+        recording_id: int,
+        source_path: str,
+        status: str = "pending",
+    ) -> int:
+        now = _now_iso()
+        with self._lock:
+            cur = self._get_conn().cursor()
+            cur.execute(
+                "INSERT INTO archive_jobs("
+                "recording_id, source_path, status, created_at, updated_at"
+                ") VALUES (?, ?, ?, ?, ?)",
+                (recording_id, source_path, status, now, now),
+            )
+            return int(cur.lastrowid)
+
+    def update_archive_job(
+        self,
+        job_id: int,
+        status: str,
+        *,
+        target_path: Any = _UNSET,
+        bytes_total: Any = _UNSET,
+        sha256: Any = _UNSET,
+        error: Any = _UNSET,
+        increment_attempts: bool = False,
+    ) -> bool:
+        updates = ["status=?", "updated_at=?"]
+        params: list[Any] = [status, _now_iso()]
+        if target_path is not _UNSET:
+            updates.append("target_path=?")
+            params.append(target_path)
+        if bytes_total is not _UNSET:
+            updates.append("bytes_total=?")
+            params.append(bytes_total)
+        if sha256 is not _UNSET:
+            updates.append("sha256=?")
+            params.append(sha256)
+        if error is not _UNSET:
+            updates.append("error=?")
+            params.append(error)
+        if increment_attempts:
+            updates.append("attempts=attempts+1")
+        params.append(job_id)
+        with self._lock:
+            cur = self._get_conn().cursor()
+            cur.execute(f"UPDATE archive_jobs SET {', '.join(updates)} WHERE id=?", params)
+            return cur.rowcount == 1
+
+    def get_archive_job(self, job_id: int) -> Optional[dict]:
+        with self._lock:
+            row = self._get_conn().execute(
+                "SELECT * FROM archive_jobs WHERE id=?", (job_id,)
+            ).fetchone()
+        return dict(row) if row is not None else None
+
+    def get_latest_archive_job(self, recording_id: int) -> Optional[dict]:
+        with self._lock:
+            row = self._get_conn().execute(
+                "SELECT * FROM archive_jobs WHERE recording_id=? ORDER BY id DESC LIMIT 1",
+                (recording_id,),
+            ).fetchone()
+        return dict(row) if row is not None else None
+
+    def list_archive_jobs(
+        self,
+        statuses: Optional[Sequence[str]] = None,
+        limit: int = 500,
+    ) -> list[dict]:
+        """按状态过滤归档任务（最近优先）；``statuses`` 为空表示全部。"""
+        clauses: list[str] = []
+        params: list[Any] = []
+        if statuses:
+            values = tuple(str(status) for status in statuses)
+            placeholders = ", ".join("?" for _ in values)
+            clauses.append(f"status IN ({placeholders})")
+            params.extend(values)
+        where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+        params.append(max(1, int(limit)))
+        with self._lock:
+            rows = self._get_conn().execute(
+                f"SELECT * FROM archive_jobs{where} ORDER BY id DESC LIMIT ?",
+                params,
+            ).fetchall()
+        return [dict(row) for row in rows]
