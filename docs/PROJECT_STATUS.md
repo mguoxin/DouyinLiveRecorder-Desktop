@@ -1,23 +1,25 @@
 # 项目开发状态记录
 
-更新时间：2026-11-27（v0.4.2 第一轮整改）
+更新时间：2026-11-28（v0.4.2 最终候选验证）
 项目：DouyinLiveRecorder-Desktop（Windows 抖音直播监控与录制）
 维护方式：每个有意义的开发阶段结束时更新；以实际代码和测试结果为准。
 
-## 0. 当前状态（2026-11-27）
+## 0. 当前状态（2026-11-28）
 
 | 项 | 当前状态 | 证据 |
 | --- | --- | --- |
-| 源码版本 | **0.4.2（候选）**；正式发布版仍为 **v0.4.1** | `pyproject.toml`、`src/dlrecorder/__init__.py`、EXE 版本资源 |
-| 开发分支 | `feat/v0.4.2` = `7e4e765`（领先 v0.4.1 共 7 个提交，未合并、未推送） | `git log v0.4.1..feat/v0.4.2` |
-| 整改分支 | `fix/v0.4.2-remediation-1`（本文档更新所在分支） | `git branch` |
+| 源码版本 | **0.4.2（候选）**；正式发布版仍为 **v0.4.1** | `pyproject.toml`、`src/dlrecorder/__init__.py`、EXE 版本资源 `0.4.2.0` |
+| 整改分支 | `fix/v0.4.2-remediation-4` = `688147b`（领先 v0.4.1 共 14 个提交，已推送 `origin`，未合并） | `git log v0.4.1..HEAD` |
 | 标签 | `v0.1.0`～`v0.4.1` 共 7 个；**无 v0.4.2 标签** | `git tag` |
 | 数据库 | SQLite Schema V2，本轮未变更 | `infrastructure/db.py` |
-| 全量回归 | **334 passed / 0 failed / 0 skipped**（2026-11-27，含新增脱敏测试） | 本轮整改报告 |
-| 已实现（候选） | W-01 结构化录制错误、W-02 通知中心、W-03 诊断导出、W-05 窗口诊断、W-04 关闭覆盖层 | `docs/releases/v0.4.2/` |
-| 本轮新增 | 日志/诊断统一脱敏、文档治理、时序测试修复、真实直播测试清单 | 本分支提交 |
-| 尚未验证 | 真实抖音直播（v0.4.2）、24 小时 soak（v0.4.x）、低配真机、托盘气泡、打包内录制链路 | 详见整改报告 §剩余阻断项 |
-| 发布结论 | **暂不发布**：真实抖音链路与远端 CI 未闭环 | `V0.4.2-REMEDIATION-1-REPORT.md` |
+| 全量回归 | **415 passed / 0 failed / 0 skipped**（2026-11-28，HEAD `688147b`） | 本地 `pytest -q`；`_audit/r4_delivery/` |
+| 远端 CI | GitHub Actions `pytest (Windows, Python 3.12)`：**success**（run 46104506413，head `688147b`） | GitHub API / Actions 页面 |
+| 候选包 | `dist/DouyinLiveRecorder-v0.4.2-candidate-r4.zip`，109,139,779 字节，SHA-256 `38EF9A0A23EACA3C4BFA0DF883B169CCC74D366B5FDDCC23AA2ECF0A8112B9FB` | `_audit/r4_delivery/evidence/package_sha256.txt` |
+| 打包闭环 | 11 步本地合成流全部通过（添加/监控/录制/强杀续录/停止/退出/重启） | `_audit/r4_delivery/evidence/e2e_run.log` |
+| 稳定性 | 30 分钟打包程序观察：30 次采样、0 停滞、0 错误、退出码 0、无残留 FFmpeg；文件 50,294,136 B 与 DB 一致 | `_audit/r4_delivery/evidence/soak_run.log`、`soak_db.json` |
+| 真实抖音 | 匿名只读解析通过（两个公开房间 `status=4` 未开播、无效 ID 不误判）；**直播录制 BLOCKED** | `_audit/r4_delivery/evidence/real_parse_probe*.log` |
+| 尚未验证 | 真实抖音直播录制、24 小时 soak、低配 i3/4GB、Windows 10、打包内诊断导出/托盘交互 | 见最终验收报告 §未完成项 |
+| 发布结论 | **CONDITIONAL PASS**：代码、回归、打包闭环与远端 CI 通过；真实直播与 24h 长稳未闭环，暂不建议公开发布 | `_audit/r4_delivery/V0.4.2-FINAL-DELIVERY-REPORT.md` |
 
 > 说明：`CHANGELOG.md` 提供完整版本沿革；下方 §0A～§10 为 **0.3.1 时期（2026-11-18）的历史快照**，
 > 保留用于追溯，不代表当前版本状态。历史测试数字、打包路径与功能结论请勿直接引用为 v0.4.2 结论。
