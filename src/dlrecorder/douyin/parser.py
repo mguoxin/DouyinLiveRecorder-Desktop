@@ -17,6 +17,7 @@ from typing import Optional
 
 from ..domain.states import ParseResult, classify_response
 from ..infrastructure.http_client import HttpClient, HttpResponse
+from .contracts import ContractViolation, validate_room
 
 logger = logging.getLogger(__name__)
 
@@ -246,9 +247,19 @@ class RealDouyinParser(DouyinParser):
                 )
                 return ParseDetail(ParseResult.RISK_CONTROL)
             return ParseDetail(ParseResult.API_MALFORMED)
+        try:
+            snapshot = validate_room(room, rid)
+        except ContractViolation as exc:
+            # 字段缺失/类型变化/结构变化：明确报错，绝不静默转换成正常数据。
+            logger.warning(
+                "抖音页面结构不符合契约，按 API_MALFORMED 处理 web_rid=%s %s",
+                rid,
+                exc,
+            )
+            return ParseDetail(ParseResult.API_MALFORMED)
         return ParseDetail(
             result=ParseResult.SUCCESS,
-            status=room.get("status"),
+            status=snapshot.status,
             stream_url=_extract_room_stream_url(room),
         )
 

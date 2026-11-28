@@ -20,6 +20,7 @@ from PySide6.QtWidgets import QApplication
 from .. import __version__
 from ..domain.archive_rules import ArchiveSettings
 from ..domain.states import ParseResult
+from ..douyin.adapter import DouyinParseAdapter
 from ..douyin.engine.parser import EngineDouyinParser
 from ..douyin.parser import DouyinParser, MockParser, RealDouyinParser
 from ..infrastructure.backup import apply_pending_restore
@@ -70,19 +71,22 @@ def _build_parser(
         parser = MockParser()
         stream_url = os.environ.get("DLR_MOCK_STREAM_URL", "").strip()
         parser.set_default(ParseResult.SUCCESS, 2, stream_url or None)
-        return parser
+        # 本地合成流允许使用文件路径，不做 URL 协议校验；状态契约仍然生效。
+        return DouyinParseAdapter(parser, enforce_stream_url=False)
     # 匿名 Cookie 会话（ttwid 等）；用户 Cookie 由 CredentialStore 加密保存，
     # 每次解析时按需读取，不进入日志与配置表。
     # 主链路：上游引擎（web enter + a_bogus）；回退：公开直播页内嵌数据。
     jar = http.cookiejar.CookieJar()
     opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar))
     legacy = RealDouyinParser(UrllibHttpClient(opener), timeout_s=15.0)
-    return EngineDouyinParser(
+    engine = EngineDouyinParser(
         quality=quality,
         timeout_s=10.0,
         fallback=legacy,
         cookie_provider=cookie_provider,
     )
+    # 契约校验与重试/熔断在适配层完成，监控循环只接收分类结果。
+    return DouyinParseAdapter(engine)
 
 
 class Application:
