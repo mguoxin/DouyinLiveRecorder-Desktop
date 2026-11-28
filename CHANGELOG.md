@@ -25,6 +25,7 @@
 ### 验证状态（截至 2026-11-28，HEAD `a9c1b11`）
 
 - 自动化回归：**516 passed / 0 failed / 0 skipped**（Windows 11，Python 3.12.16，耗时 207 秒）。
+- 远端 CI：GitHub Actions `pytest (Windows, Python 3.12)` 在 `f595c49` 上 **success**（run 46113193659）。
 - 性能实测（同一会话）：50 房间 × 300 次指标采样 mean 1.45 ms / p95 2.24 ms；1 万条录制检索 mean 2.19 ms；容量统计 8.05 ms。
 - 候选程序：`DouyinLiveRecorder-v0.5.0-candidate.zip`（109,217,601 字节，SHA-256 `B51AB48E…C697`）完成 11 步本地合成流闭环：Schema v3 → 添加房间 → 监控 → 自动录制 → 文件增长 524,288 字节 → 强杀 FFmpeg → 自动续录（2 分段）→ 停止录制/监控 → 自动归档 1 个完成分段且源文件保留、SHA-256 一致 → 打开录制库 → 退出码 0、无残留 FFmpeg → 重启 Schema 仍为 3。
 - 6 分钟 3 房间 soak：3 次强杀全部自动续录，6 分段（3 completed），归档 3 个且哈希全部一致，RSS 40.3→40.5 MB，线程 6 稳定，退出后线程 3→1，`integrity_check=ok`。
