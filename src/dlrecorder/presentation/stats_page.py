@@ -185,7 +185,7 @@ class StatsPage(QWidget):
         daily_header = QLabel("每日录制（最近 30 天）")
         daily_header.setObjectName("SectionTitle")
         layout.addWidget(daily_header)
-        self.daily_table = self._make_table(_DAILY_COLUMNS)
+        self.daily_table = self._make_table(_DAILY_COLUMNS, stretch_column=5)
         layout.addWidget(self.daily_table, 3)
 
         lower = QHBoxLayout()
@@ -194,7 +194,7 @@ class StatsPage(QWidget):
         anchor_header = QLabel("按主播统计")
         anchor_header.setObjectName("SectionTitle")
         anchor_box.addWidget(anchor_header)
-        self.anchor_table = self._make_table(_ANCHOR_COLUMNS)
+        self.anchor_table = self._make_table(_ANCHOR_COLUMNS, stretch_column=0)
         anchor_box.addWidget(self.anchor_table)
         lower.addLayout(anchor_box, 3)
 
@@ -202,7 +202,7 @@ class StatsPage(QWidget):
         failure_header = QLabel("失败/中断原因")
         failure_header.setObjectName("SectionTitle")
         failure_box.addWidget(failure_header)
-        self.failure_table = self._make_table(_FAILURE_COLUMNS)
+        self.failure_table = self._make_table(_FAILURE_COLUMNS, stretch_column=0)
         failure_box.addWidget(self.failure_table)
         lower.addLayout(failure_box, 2)
         layout.addLayout(lower, 2)
@@ -217,17 +217,32 @@ class StatsPage(QWidget):
         self._update_worker: Optional[_UpdateWorker] = None
 
     @staticmethod
-    def _make_table(columns: tuple[str, ...]) -> QTableWidget:
+    def _make_table(
+        columns: tuple[str, ...], *, stretch_column: Optional[int] = None
+    ) -> QTableWidget:
+        """构建只读表格。
+
+        - 默认让最后一列吸收剩余宽度；
+        - ``stretch_column`` 指定长文本列（如主播名称、失败原因）吸收剩余宽度，
+          避免内容撑宽表格导致窄窗口出现横向溢出。
+        """
         table = QTableWidget(0, len(columns))
         table.setHorizontalHeaderLabels(columns)
         table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         table.verticalHeader().setVisible(False)
         table.setAlternatingRowColors(True)
-        table.horizontalHeader().setSectionResizeMode(
-            QHeaderView.ResizeMode.ResizeToContents
-        )
-        table.horizontalHeader().setStretchLastSection(True)
+        table.setTextElideMode(Qt.TextElideMode.ElideRight)
+        table.setHorizontalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
+        header = table.horizontalHeader()
+        header.setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+        if stretch_column is not None and 0 <= stretch_column < len(columns):
+            header.setSectionResizeMode(
+                stretch_column, QHeaderView.ResizeMode.Stretch
+            )
+            header.setStretchLastSection(False)
+        else:
+            header.setStretchLastSection(True)
         return table
 
     # ---------- 加载 ----------

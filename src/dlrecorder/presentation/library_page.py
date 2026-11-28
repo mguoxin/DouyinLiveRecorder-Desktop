@@ -387,8 +387,16 @@ class LibraryPage(QWidget):
         self.table.setAlternatingRowColors(True)
         header_view = self.table.horizontalHeader()
         header_view.setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+        # 主播名称与文件路径可能很长：让这两列吸收剩余宽度并省略显示，
+        # 避免内容撑宽表格，在 1280 等常见宽度下出现横向溢出。
+        header_view.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         header_view.setSectionResizeMode(
             len(COLUMNS) - 1, QHeaderView.ResizeMode.Stretch
+        )
+        header_view.setStretchLastSection(False)
+        self.table.setTextElideMode(Qt.TextElideMode.ElideRight)
+        self.table.setHorizontalScrollMode(
+            QAbstractItemView.ScrollMode.ScrollPerPixel
         )
 
         body = QHBoxLayout()
