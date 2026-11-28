@@ -23,7 +23,7 @@ from ..domain.recording_query import RecordingQuery
 from ..domain.states import RoomState
 
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 logger = logging.getLogger(__name__)
 
@@ -142,11 +142,11 @@ class Database:
             }
             user_tables = tables - {"schema_version", "sqlite_sequence"}
             if current == 0 and not user_tables:
-                self._initialize_v3(conn)
+                self._initialize_latest(conn)
             else:
                 self._migrate(cur, current, SCHEMA_VERSION)
 
-    def _initialize_v3(self, conn: sqlite3.Connection) -> None:
+    def _initialize_latest(self, conn: sqlite3.Connection) -> None:
         """全新数据库直接建立最新 Schema，不创建空数据库迁移备份。"""
         cur = conn.cursor()
         try:
@@ -176,7 +176,9 @@ class Database:
             )
             self._create_recordings(cur, "recordings")
             self._create_archive_jobs(cur)
+            self._create_v4_tables(cur)
             self._create_v3_indexes(cur)
+            self._create_v4_indexes(cur)
             self._set_schema_version(cur)
             conn.commit()
         except Exception:
@@ -230,6 +232,23 @@ class Database:
                 archive_error TEXT,
                 archive_attempts INTEGER NOT NULL DEFAULT 0
             """
+        asset_columns = ""
+        if schema_version >= 4:
+            asset_columns = """
+                ,
+                duration_s REAL,
+                width INTEGER,
+                height INTEGER,
+                video_codec TEXT,
+                audio_codec TEXT,
+                thumbnail_path TEXT,
+                metadata_status TEXT NOT NULL DEFAULT 'none'
+                    CHECK(metadata_status IN ('none', 'pending', 'ready', 'failed')),
+                metadata_error TEXT,
+                metadata_updated_at TEXT,
+                favorite INTEGER NOT NULL DEFAULT 0 CHECK(favorite IN (0, 1)),
+                note TEXT NOT NULL DEFAULT ''
+            """
         cur.execute(
             f"""
             CREATE TABLE {table_name} (
@@ -247,6 +266,7 @@ class Database:
                 snapshot_source TEXT NOT NULL DEFAULT 'unknown'
                     CHECK(snapshot_source IN ('captured', 'migration_backfill', 'unknown'))
                 {archive_columns}
+                {asset_columns}
             )
             """
         )
@@ -292,6 +312,100 @@ class Database:
         )
 
     @staticmethod
+    def _create_v4_tables(cur: sqlite3.Cursor) -> None:
+        """V4 新增媒体资产管理表：标签、主播档案、自动化规则及执行记录。"""
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS tags (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL UNIQUE,
+                color TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL
+            )
+            """
+        )
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS recording_tags (
+                recording_id INTEGER NOT NULL
+                    REFERENCES recordings(id) ON DELETE CASCADE,
+                tag_id INTEGER NOT NULL
+                    REFERENCES tags(id) ON DELETE CASCADE,
+                created_at TEXT NOT NULL,
+                PRIMARY KEY (recording_id, tag_id)
+            )
+            """
+        )
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS anchor_profiles (
+                room_id INTEGER PRIMARY KEY
+                    REFERENCES rooms(id) ON DELETE CASCADE,
+                avatar_path TEXT,
+                bio TEXT NOT NULL DEFAULT '',
+                note TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS automation_rules (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                room_id INTEGER REFERENCES rooms(id) ON DELETE CASCADE,
+                name TEXT NOT NULL,
+                rule_type TEXT NOT NULL
+                    CHECK(rule_type IN (
+                        'monitor_schedule', 'recording_schedule',
+                        'archive', 'disk_guard', 'post_process'
+                    )),
+                enabled INTEGER NOT NULL DEFAULT 1 CHECK(enabled IN (0, 1)),
+                priority INTEGER NOT NULL DEFAULT 100,
+                config TEXT NOT NULL DEFAULT '{}',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS rule_runs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                rule_id INTEGER
+                    REFERENCES automation_rules(id) ON DELETE SET NULL,
+                room_id INTEGER REFERENCES rooms(id) ON DELETE SET NULL,
+                status TEXT NOT NULL
+                    CHECK(status IN ('running', 'succeeded', 'failed', 'skipped')),
+                started_at TEXT NOT NULL,
+                finished_at TEXT,
+                message TEXT,
+                created_at TEXT NOT NULL
+            )
+            """
+        )
+
+    @staticmethod
+    def _create_v4_indexes(cur: sqlite3.Cursor) -> None:
+        for statement in (
+            "CREATE INDEX IF NOT EXISTS idx_recordings_favorite "
+            "ON recordings(favorite)",
+            "CREATE INDEX IF NOT EXISTS idx_recordings_metadata_status "
+            "ON recordings(metadata_status)",
+            "CREATE INDEX IF NOT EXISTS idx_recording_tags_tag "
+            "ON recording_tags(tag_id)",
+            "CREATE INDEX IF NOT EXISTS idx_automation_rules_room "
+            "ON automation_rules(room_id)",
+            "CREATE INDEX IF NOT EXISTS idx_automation_rules_enabled "
+            "ON automation_rules(enabled)",
+            "CREATE INDEX IF NOT EXISTS idx_rule_runs_rule "
+            "ON rule_runs(rule_id)",
+            "CREATE INDEX IF NOT EXISTS idx_rule_runs_started "
+            "ON rule_runs(started_at)",
+        ):
+            cur.execute(statement)
+
+    @staticmethod
     def _set_schema_version(
         cur: sqlite3.Cursor,
         version: int = SCHEMA_VERSION,
@@ -311,6 +425,9 @@ class Database:
             elif version == 2:
                 self._migrate_v2_to_v3(cur)
                 version = 3
+            elif version == 3:
+                self._migrate_v3_to_v4(cur)
+                version = 4
             else:
                 raise ValueError(f"不支持的迁移源版本: {version}")
 
@@ -866,6 +983,226 @@ class Database:
         ).fetchone()[0]
         if not_backfilled:
             raise RuntimeError(f"{not_backfilled} 条录制记录未完成归档状态回填")
+
+        violations = cur.execute("PRAGMA foreign_key_check").fetchall()
+        if violations:
+            raise RuntimeError(f"外键完整性检查失败: {violations}")
+
+    _V4_ASSET_COLUMNS: tuple[tuple[str, str], ...] = (
+        ("duration_s", "REAL"),
+        ("width", "INTEGER"),
+        ("height", "INTEGER"),
+        ("video_codec", "TEXT"),
+        ("audio_codec", "TEXT"),
+        ("thumbnail_path", "TEXT"),
+        (
+            "metadata_status",
+            "TEXT NOT NULL DEFAULT 'none' CHECK(metadata_status IN "
+            "('none', 'pending', 'ready', 'failed'))",
+        ),
+        ("metadata_error", "TEXT"),
+        ("metadata_updated_at", "TEXT"),
+        ("favorite", "INTEGER NOT NULL DEFAULT 0 CHECK(favorite IN (0, 1))"),
+        ("note", "TEXT NOT NULL DEFAULT ''"),
+    )
+
+    def _migrate_v3_to_v4(self, cur: sqlite3.Cursor) -> None:
+        """V3→V4：纯增量升级，增加媒体资产字段与管理表，事务内完成并校验。"""
+        conn = cur.connection
+        backup_path: Optional[Path] = None
+        stage = "检查事务状态"
+        commit_attempted = False
+        try:
+            if conn.in_transaction:
+                raise RuntimeError("迁移前存在未提交事务")
+            stage = "获取数据库写锁"
+            cur.execute("BEGIN IMMEDIATE")
+
+            row = cur.execute("SELECT MAX(version) AS v FROM schema_version").fetchone()
+            current = row["v"] if row and row["v"] is not None else 0
+            if current >= 4:
+                conn.rollback()
+                return
+
+            stage = "SQLite Online Backup API 一致性备份"
+            backup_path = self._create_migration_backup(3, 4)
+            logger.info("V3→V4 迁移备份已创建并验证: %s", backup_path)
+
+            expected_counts = {
+                table: cur.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+                for table in ("rooms", "monitor_sessions", "recordings", "settings")
+            }
+
+            stage = "为 recordings 增加媒体资产字段"
+            existing_columns = {
+                info["name"]
+                for info in cur.execute("PRAGMA table_info(recordings)").fetchall()
+            }
+            for column, ddl in self._V4_ASSET_COLUMNS:
+                if column in existing_columns:
+                    continue
+                cur.execute(f"ALTER TABLE recordings ADD COLUMN {column} {ddl}")
+
+            stage = "创建媒体资产与自动化规则表"
+            self._create_v4_tables(cur)
+            self._create_v4_indexes(cur)
+
+            stage = "更新 Schema 版本"
+            self._set_schema_version(cur, 4)
+            stage = "验证 V4 数据与结构"
+            self._verify_v4_migration(cur, expected_counts)
+            stage = "提交 V4 迁移事务"
+            commit_attempted = True
+            conn.commit()
+        except Exception as exc:
+            if conn.in_transaction:
+                try:
+                    conn.rollback()
+                except Exception as rollback_error:
+                    logger.critical(
+                        "V3→V4 迁移失败且回滚失败，阶段=%s，备份=%s；"
+                        "必须保留现场并人工恢复",
+                        stage,
+                        backup_path,
+                        exc_info=True,
+                    )
+                    raise RuntimeError("迁移失败且回滚失败，禁止继续操作") from rollback_error
+                logger.exception(
+                    "V3→V4 迁移失败，阶段=%s，异常=%s，备份=%s；原数据库事务已回滚",
+                    stage,
+                    exc,
+                    backup_path,
+                )
+                raise
+            if commit_attempted:
+                logger.critical(
+                    "V3→V4 迁移提交调用异常，阶段=%s，备份=%s；"
+                    "连接已无活动事务，提交结果无法确认，禁止继续操作",
+                    stage,
+                    backup_path,
+                    exc_info=True,
+                )
+                self.close()
+                raise RuntimeError("迁移提交结果不确定，禁止继续操作") from exc
+            logger.exception(
+                "V3→V4 迁移在提交前失败，阶段=%s，异常=%s，备份=%s；"
+                "当前无活动事务，无需回滚",
+                stage,
+                exc,
+                backup_path,
+            )
+            raise
+        logger.info("V3→V4 数据库迁移完成，备份保留于: %s", backup_path)
+
+    @staticmethod
+    def _verify_v4_migration(
+        cur: sqlite3.Cursor,
+        expected_counts: dict[str, Any],
+    ) -> None:
+        version = cur.execute("SELECT MAX(version) FROM schema_version").fetchone()[0]
+        if version != 4:
+            raise RuntimeError(f"Schema 版本错误: {version}")
+
+        columns = {
+            row["name"]: row for row in cur.execute("PRAGMA table_info(recordings)").fetchall()
+        }
+        for column, _ddl in Database._V4_ASSET_COLUMNS:
+            if column not in columns:
+                raise RuntimeError(f"recordings 缺少媒体资产字段: {column}")
+        if not columns["metadata_status"]["notnull"]:
+            raise RuntimeError("recordings.metadata_status 必须为 NOT NULL")
+        default_value = columns["metadata_status"]["dflt_value"]
+        if default_value is None or str(default_value).strip("'\"") != "none":
+            raise RuntimeError("recordings.metadata_status 默认值必须为 'none'")
+        if not columns["favorite"]["notnull"]:
+            raise RuntimeError("recordings.favorite 必须为 NOT NULL")
+        if str(columns["favorite"]["dflt_value"]).strip("'\"") != "0":
+            raise RuntimeError("recordings.favorite 默认值必须为 0")
+        if not columns["note"]["notnull"]:
+            raise RuntimeError("recordings.note 必须为 NOT NULL")
+
+        required_tables = {
+            "tags": {"id", "name", "color", "created_at"},
+            "recording_tags": {"recording_id", "tag_id", "created_at"},
+            "anchor_profiles": {
+                "room_id", "avatar_path", "bio", "note", "created_at", "updated_at",
+            },
+            "automation_rules": {
+                "id", "room_id", "name", "rule_type", "enabled",
+                "priority", "config", "created_at", "updated_at",
+            },
+            "rule_runs": {
+                "id", "rule_id", "room_id", "status",
+                "started_at", "finished_at", "message", "created_at",
+            },
+        }
+        for table, required in required_tables.items():
+            actual = {
+                row["name"]
+                for row in cur.execute(f"PRAGMA table_info({table})").fetchall()
+            }
+            if not required.issubset(actual):
+                raise RuntimeError(f"V4 表 {table} 字段不完整")
+
+        def _has_fk(table: str, column: str, target: str, action: str) -> bool:
+            return any(
+                fk["from"] == column
+                and fk["table"] == target
+                and fk["on_delete"] == action
+                for fk in cur.execute(f"PRAGMA foreign_key_list({table})").fetchall()
+            )
+
+        if not _has_fk("recording_tags", "recording_id", "recordings", "CASCADE"):
+            raise RuntimeError("recording_tags.recording_id 外键不符合 V4 设计")
+        if not _has_fk("recording_tags", "tag_id", "tags", "CASCADE"):
+            raise RuntimeError("recording_tags.tag_id 外键不符合 V4 设计")
+        if not _has_fk("anchor_profiles", "room_id", "rooms", "CASCADE"):
+            raise RuntimeError("anchor_profiles.room_id 外键不符合 V4 设计")
+        if not _has_fk("automation_rules", "room_id", "rooms", "CASCADE"):
+            raise RuntimeError("automation_rules.room_id 外键不符合 V4 设计")
+        if not _has_fk("rule_runs", "rule_id", "automation_rules", "SET NULL"):
+            raise RuntimeError("rule_runs.rule_id 外键不符合 V4 设计")
+        if not _has_fk("rule_runs", "room_id", "rooms", "SET NULL"):
+            raise RuntimeError("rule_runs.room_id 外键不符合 V4 设计")
+
+        indexes = {
+            row["name"]
+            for row in cur.execute(
+                "SELECT name FROM sqlite_master WHERE type='index'"
+            ).fetchall()
+        }
+        for index in (
+            "idx_recordings_favorite",
+            "idx_recordings_metadata_status",
+            "idx_recording_tags_tag",
+            "idx_automation_rules_room",
+            "idx_automation_rules_enabled",
+            "idx_rule_runs_rule",
+            "idx_rule_runs_started",
+        ):
+            if index not in indexes:
+                raise RuntimeError(f"V4 索引缺失: {index}")
+
+        for table, expected in expected_counts.items():
+            actual = cur.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+            if actual != expected:
+                raise RuntimeError(f"{table} 迁移后记录数不一致: {actual} != {expected}")
+
+        bad_metadata = cur.execute(
+            "SELECT COUNT(*) FROM recordings WHERE metadata_status != 'none'"
+        ).fetchone()[0]
+        if bad_metadata:
+            raise RuntimeError(f"{bad_metadata} 条录制记录未完成元数据状态回填")
+        bad_favorite = cur.execute(
+            "SELECT COUNT(*) FROM recordings WHERE favorite != 0"
+        ).fetchone()[0]
+        if bad_favorite:
+            raise RuntimeError(f"{bad_favorite} 条录制记录未完成收藏状态回填")
+        bad_note = cur.execute(
+            "SELECT COUNT(*) FROM recordings WHERE note IS NULL OR note != ''"
+        ).fetchone()[0]
+        if bad_note:
+            raise RuntimeError(f"{bad_note} 条录制记录未完成备注回填")
 
         violations = cur.execute("PRAGMA foreign_key_check").fetchall()
         if violations:

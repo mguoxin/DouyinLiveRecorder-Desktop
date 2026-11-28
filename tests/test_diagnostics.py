@@ -120,7 +120,7 @@ def test_zip_contains_only_expected_entries_and_no_database(data_dir):
         report = json.loads(archive.read("report.json").decode("utf-8"))
     assert report["schema"] == 1
     assert report["app"]["version"] == "0.4.2-test"
-    assert report["database"]["schema_version"] == 3
+    assert report["database"]["schema_version"] == 4
     assert report["database"]["quick_check"] == "ok"
     assert report["database"]["rooms"] == 1
     assert report["privacy"]["excluded"]

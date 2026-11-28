@@ -276,6 +276,16 @@ _V3_INDEXES = {
     "idx_archive_jobs_status",
     "idx_archive_jobs_recording",
 }
+_V4_INDEXES = {
+    "idx_recordings_favorite",
+    "idx_recordings_metadata_status",
+    "idx_recording_tags_tag",
+    "idx_automation_rules_room",
+    "idx_automation_rules_enabled",
+    "idx_rule_runs_rule",
+    "idx_rule_runs_started",
+}
+_INTERNAL_INDEXES = _V3_INDEXES | _V4_INDEXES
 
 
 def _custom_object_definitions(state: dict) -> list[tuple]:
@@ -288,7 +298,7 @@ def _custom_object_definitions(state: dict) -> list[tuple]:
             obj[0] == "index"
             and obj[2] in {"monitor_sessions", "recordings"}
             and obj[3] is not None
-            and obj[1] not in _V3_INDEXES
+            and obj[1] not in _INTERNAL_INDEXES
         )
     ]
 
@@ -402,7 +412,7 @@ def db(tmp_path: Path) -> Database:
 
 def test_schema_version(db: Database) -> None:
     row = db._get_conn().execute("SELECT MAX(version) AS v FROM schema_version").fetchone()
-    assert row["v"] == 3
+    assert row["v"] == 4
 
 
 def test_add_and_list_room(db: Database) -> None:
@@ -494,7 +504,7 @@ def test_new_database_directly_initializes_latest_schema(tmp_path: Path) -> None
     path = tmp_path / "fresh.db"
     db = Database(path)
     conn = db._get_conn()
-    assert conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0] == 3
+    assert conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0] == 4
     for table in ("monitor_sessions", "recordings"):
         columns = {row["name"]: row for row in conn.execute(f"PRAGMA table_info({table})")}
         assert columns["room_id"]["notnull"] == 0
@@ -518,11 +528,28 @@ def test_new_database_directly_initializes_latest_schema(tmp_path: Path) -> None
         "id", "recording_id", "source_path", "target_path", "status",
         "attempts", "bytes_total", "sha256", "error", "created_at", "updated_at",
     }.issubset(job_columns)
+    assert {
+        "duration_s", "width", "height", "video_codec", "audio_codec",
+        "thumbnail_path", "metadata_status", "metadata_error",
+        "metadata_updated_at", "favorite", "note",
+    }.issubset(recording_columns)
+    assert recording_columns["metadata_status"]["notnull"] == 1
+    assert recording_columns["metadata_status"]["dflt_value"].strip("'\"") == "none"
+    assert recording_columns["favorite"]["notnull"] == 1
+    assert str(recording_columns["favorite"]["dflt_value"]).strip("'\"") == "0"
+    assert recording_columns["note"]["notnull"] == 1
+    tables = {
+        row["name"] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+    }
+    assert {
+        "tags", "recording_tags", "anchor_profiles",
+        "automation_rules", "rule_runs",
+    }.issubset(tables)
     indexes = {
         row["name"]
         for row in conn.execute("SELECT name FROM sqlite_master WHERE type='index'")
     }
-    assert _V3_INDEXES.issubset(indexes)
+    assert _INTERNAL_INDEXES.issubset(indexes)
     job_fks = conn.execute("PRAGMA foreign_key_list(archive_jobs)").fetchall()
     assert any(
         fk["from"] == "recording_id"
@@ -543,7 +570,7 @@ def test_v1_migration_preserves_history_snapshots_and_objects(tmp_path: Path) ->
     after_state = _read_database_state(path)
 
     assert _custom_object_definitions(after_state) == _custom_object_definitions(before_state)
-    assert conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0] == 3
+    assert conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0] == 4
     assert conn.execute("SELECT COUNT(*) FROM rooms").fetchone()[0] == 2
     assert conn.execute("SELECT COUNT(*) FROM monitor_sessions").fetchone()[0] == 2
     assert conn.execute("SELECT COUNT(*) FROM recordings").fetchone()[0] == 3
@@ -929,7 +956,7 @@ def test_post_commit_foreign_key_failure_reports_committed_v2(
     reopened = Database(path)
     conn = reopened._get_conn()
     assert conn.execute("PRAGMA foreign_keys").fetchone()[0] == 1
-    assert conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0] == 3
+    assert conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0] == 4
     assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
     assert _read_database_state(path) == expected_state
     reopened.close()
@@ -989,7 +1016,7 @@ def test_backup_internal_failure_preserves_primary_error_and_closes_connections(
     reopened = Database(path)
     conn = reopened._get_conn()
     assert conn.execute("PRAGMA foreign_keys").fetchone()[0] == 1
-    assert conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0] == 3
+    assert conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0] == 4
     assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
     reopened.close()
 
@@ -1076,7 +1103,7 @@ def test_commit_rollback_then_exception_reports_unknown_and_preserves_v1(
     reopened = Database(path)
     conn = reopened._get_conn()
     assert conn.execute("PRAGMA foreign_keys").fetchone()[0] == 1
-    assert conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0] == 3
+    assert conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0] == 4
     assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
     assert conn.execute(
         "SELECT web_rid_snapshot FROM recordings WHERE id=202"
