@@ -564,3 +564,40 @@ def test_qt_log_bridge_redacts_emitted_messages(qt_app):
     assert "%USERPROFILE%" in joined
     assert "<user>" in joined
     assert "<url>" in joined
+
+
+# ---------------------------------------------------------------------------
+# 第四轮独立复核补强：驼峰键名 / 全角键名 / 无空格逗号字段
+# ---------------------------------------------------------------------------
+@pytest.mark.parametrize(
+    "key",
+    ["accessToken", "refreshToken", "sessionId", "cookieValue", "msToken"],
+)
+def test_camel_case_secret_keys_are_redacted(key):
+    out = redact_log_text(f"{key}=abc123")
+    assert "abc123" not in out, out
+    assert "<redacted>" in out
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["ｔｏｋｅｎ＝abc123", "ＴＯＫＥＮ=abc123", "ｃｏｏｋｉｅ＝abc123"],
+)
+def test_fullwidth_secret_keys_are_redacted(text):
+    out = redact_log_text(text)
+    assert "abc123" not in out, out
+    assert "<redacted>" in out
+
+
+@pytest.mark.parametrize(
+    "text,tail",
+    [(r"D:\a.ts,code=1", ",code=1"), (r"D:\a.ts;error=1", ";error=1")],
+)
+def test_path_stops_before_unspaced_field(text, tail):
+    out = redact_log_text(text)
+    assert out == f"<path>{tail}"
+
+
+@pytest.mark.parametrize("text", [r"D:\a,b,c\d.ts", r"D:\a;b;c\d.ts"])
+def test_legal_commas_and_semicolons_stay_in_path(text):
+    assert redact_log_text(text) == "<path>"

@@ -63,8 +63,9 @@ _PATH_SPACE = (
     r"|\d{4}-\d{2}-\d{2}"
     r"|\d{10,13}(?=\D|$)))"
 )
-# 逗号/分号是合法文件名字符；但若其后紧接下一个盘符路径，则视为路径结束。
-_PATH_PUNCT = r"[,;](?=\S)(?![A-Za-z]:[\\/])"
+# 逗号/分号是合法文件名字符；但若其后紧接下一个盘符路径或 ``key=value`` 字段，
+# 则视为路径结束（支持 ``D:\a.ts,code=1`` 这种无空格写法）。
+_PATH_PUNCT = r"[,;](?=\S)(?![A-Za-z]:[\\/]|[A-Za-z_][\w.\-]*[=:：＝])"
 _PATH_ATOM = rf"(?:{_PATH_CHAR}|{_PATH_SPACE}|{_PATH_PUNCT})"
 WIN_PATH_RE = re.compile(rf"[A-Za-z]:[\\/](?:{_PATH_ATOM}|[\\/])*")
 
@@ -112,14 +113,16 @@ _METRIC_TOKENS = frozenset(
 )
 _KEY_QUALIFIERS = frozenset({"api", "access", "secret", "client", "app", "private"})
 
+_KEY_CHARS = r"A-Za-z0-9_.%\-Ａ-Ｚａ-ｚ０-９＿．－"
+_KEY_START = r"A-Za-z_%Ａ-Ｚａ-ｚ０-９"
 _KEY_VALUE_RE = re.compile(
-    r"(?P<key>[A-Za-z_%][A-Za-z0-9_.%\-]{1,63})"
+    rf"(?P<key>[{_KEY_START}][{_KEY_CHARS}]{{1,63}})"
     r"(?P<sep>[=:：＝])"
     r"(?P<val>[^\s&,;\"'<>]+)"
 )
 # 分隔符两侧允许空白（``token ＝ abc`` / ``token = abc``）。
 SPACED_KEY_VALUE_RE = re.compile(
-    r"(?P<key>[A-Za-z_%][A-Za-z0-9_.%\-]{1,63})"
+    rf"(?P<key>[{_KEY_START}][{_KEY_CHARS}]{{1,63}})"
     r"(?P<sep>\s*[=:：＝]\s*)"
     r"(?P<val>[^\s&,;\"'<>]+)"
 )
@@ -210,14 +213,20 @@ def _redact_encoded_url(match: re.Match[str]) -> str:
 
 # ---------- 凭据 ----------
 def _normalize_key(key: str) -> str:
-    """仅对键名做有界归一化（百分号解码 + NFKC），不触碰值。"""
+    """仅对键名做有界归一化（百分号解码 / NFKC / 驼峰切分），不触碰值。"""
+    encoded = "%" in key
     text = key
-    if "%" in text:
+    if encoded:
         try:
-            text = unquote(text, errors="strict")
+            text = unquote(key, errors="strict")
         except (UnicodeDecodeError, ValueError):
             text = key
-    return unicodedata.normalize("NFKC", text).strip().lower()
+    text = unicodedata.normalize("NFKC", text).strip()
+    # accessToken / refreshToken / sessionId → access_token / session_id。
+    # 百分号编码键名不做驼峰切分，避免 ``TO%6BEN`` 解码成 ``TOkEN`` 后被误切。
+    if not encoded:
+        text = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", "_", text)
+    return text.lower()
 
 
 def _is_sensitive_key(normalized: str) -> bool:
