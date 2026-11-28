@@ -27,6 +27,7 @@ from PySide6.QtWidgets import (
 )
 
 from .. import __version__
+from ..application.media_probe_service import MediaProbeService
 from ..application.monitor_service import MonitorService
 from ..application.recording_library_service import RecordingLibraryService
 from ..application.recording_service import RecordingService
@@ -84,6 +85,7 @@ class MainWindow(QMainWindow):
         on_settings_applied: Optional[Callable[[AppSettings], None]] = None,
         theme_manager: Optional[ThemeManager] = None,
         log_dir: Optional[Path] = None,
+        media_service: Optional[MediaProbeService] = None,
     ) -> None:
         super().__init__()
         self._service = service
@@ -91,6 +93,7 @@ class MainWindow(QMainWindow):
         self._auto_record = auto_record
         self._settings_service = settings_service
         self._database = database
+        self._media_service = media_service
         self._on_settings_applied = on_settings_applied
         self._log_dir = log_dir
         self._closing = False
@@ -158,7 +161,9 @@ class MainWindow(QMainWindow):
                 recordings_dir_provider=lambda: self._recording.output_dir,
                 archive_dir_provider=self._archive_dir,
             )
-            self.library_page = LibraryPage(self.library_service)
+            self.library_page = LibraryPage(
+                self.library_service, media_service=self._media_service
+            )
         self.logs_page = LogsPage()
         if self._settings_service is not None:
             current = self._settings_service.load()

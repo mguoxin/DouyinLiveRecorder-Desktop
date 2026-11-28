@@ -1570,6 +1570,65 @@ class Database:
             "by_archive": [dict(row) for row in by_archive],
         }
 
+    # ---------- 媒体元数据（recordings） ----------
+    _METADATA_STATUSES = {"none", "pending", "ready", "failed"}
+
+    def list_recordings_pending_metadata(self, *, limit: int = 200) -> list[dict]:
+        """返回尚未提取元数据的已完成录制（最近优先）。"""
+        with self._lock:
+            rows = self._get_conn().execute(
+                "SELECT * FROM recordings WHERE status='completed' "
+                "AND metadata_status='none' AND file_path IS NOT NULL "
+                "ORDER BY id DESC LIMIT ?",
+                (max(1, int(limit)),),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def set_recording_metadata(
+        self,
+        recording_id: int,
+        *,
+        status: str,
+        duration_s: Any = _UNSET,
+        width: Any = _UNSET,
+        height: Any = _UNSET,
+        video_codec: Any = _UNSET,
+        audio_codec: Any = _UNSET,
+        thumbnail_path: Any = _UNSET,
+        error: Any = _UNSET,
+        updated_at: Any = _UNSET,
+        expected_status: Optional[str] = None,
+    ) -> bool:
+        """更新媒体元数据；``expected_status`` 提供乐观并发保护。"""
+        if status not in self._METADATA_STATUSES:
+            raise ValueError(f"非法元数据状态: {status}")
+        updates = ["metadata_status=?"]
+        params: list[Any] = [status]
+        for column, value in (
+            ("duration_s", duration_s),
+            ("width", width),
+            ("height", height),
+            ("video_codec", video_codec),
+            ("audio_codec", audio_codec),
+            ("thumbnail_path", thumbnail_path),
+            ("metadata_error", error),
+        ):
+            if value is not _UNSET:
+                updates.append(f"{column}=?")
+                params.append(value)
+        updates.append("metadata_updated_at=?")
+        params.append(_now_iso() if updated_at is _UNSET else updated_at)
+
+        where = "id=?"
+        params.append(int(recording_id))
+        if expected_status is not None:
+            where += " AND metadata_status=?"
+            params.append(expected_status)
+        with self._lock:
+            cur = self._get_conn().cursor()
+            cur.execute(f"UPDATE recordings SET {', '.join(updates)} WHERE {where}", params)
+            return cur.rowcount > 0
+
     # ---------- 归档状态（recordings） ----------
     def set_recording_archive(
         self,

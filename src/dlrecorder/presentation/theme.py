@@ -167,6 +167,13 @@ QLabel#SectionTitle {
 QLabel#Muted {
     color: $text_muted;
 }
+QLabel#Preview {
+    background: $bg;
+    border: 1px dashed $border;
+    border-radius: 8px;
+    color: $text_muted;
+    font-size: 12px;
+}
 QLabel#Secondary {
     color: $text_secondary;
 }

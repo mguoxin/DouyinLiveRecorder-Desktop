@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Optional
 
 from PySide6.QtCore import Qt, QUrl, Signal
-from PySide6.QtGui import QDesktopServices
+from PySide6.QtGui import QDesktopServices, QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
@@ -27,6 +27,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ..application.media_probe_service import MediaProbeService
 from ..application.recording_library_service import (
     ConsistencyReport,
     DeleteReport,
@@ -57,6 +58,12 @@ _ARCHIVE_LABELS = {
     "archived": "已归档",
     "failed": "归档失败",
     "skipped": "已跳过",
+}
+_METADATA_LABELS = {
+    "none": "未提取",
+    "pending": "提取中",
+    "ready": "已就绪",
+    "failed": "提取失败",
 }
 _ISSUE_LABELS = {
     "missing": "数据库有记录但文件缺失",
@@ -104,10 +111,13 @@ class LibraryPage(QWidget):
         self,
         service: RecordingLibraryService,
         parent: Optional[QWidget] = None,
+        *,
+        media_service: Optional[MediaProbeService] = None,
     ) -> None:
         super().__init__(parent)
         self.setObjectName("Page")
         self._service = service
+        self._media_service = media_service
         self._rows: list[dict] = []
         self._tokens: Optional[ThemeTokens] = None
 
@@ -211,7 +221,40 @@ class LibraryPage(QWidget):
         header_view.setSectionResizeMode(
             len(COLUMNS) - 1, QHeaderView.ResizeMode.Stretch
         )
-        layout.addWidget(self.table, 1)
+
+        body = QHBoxLayout()
+        body.setSpacing(12)
+        body.addWidget(self.table, 1)
+
+        detail = QFrame()
+        detail.setObjectName("Card")
+        detail.setFixedWidth(272)
+        detail_layout = QVBoxLayout(detail)
+        detail_layout.setContentsMargins(14, 12, 14, 12)
+        detail_layout.setSpacing(8)
+        self.preview_label = QLabel("暂无封面")
+        self.preview_label.setObjectName("Preview")
+        self.preview_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.preview_label.setFixedSize(240, 135)
+        self.preview_label.setWordWrap(True)
+        detail_layout.addWidget(self.preview_label, 0, Qt.AlignmentFlag.AlignHCenter)
+        self.detail_label = QLabel("选择一条录制查看详情")
+        self.detail_label.setWordWrap(True)
+        self.detail_label.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse
+        )
+        detail_layout.addWidget(self.detail_label)
+        self.note_label = QLabel("")
+        self.note_label.setObjectName("Muted")
+        self.note_label.setWordWrap(True)
+        detail_layout.addWidget(self.note_label)
+        detail_layout.addStretch(1)
+        self.btn_probe = QPushButton("提取媒体信息")
+        self.btn_probe.setToolTip("在后台重新读取时长、分辨率与编码，并生成缩略图")
+        self.btn_probe.setEnabled(media_service is not None)
+        detail_layout.addWidget(self.btn_probe)
+        body.addWidget(detail)
+        layout.addLayout(body, 1)
 
         self.status_label = QLabel("")
         self.status_label.setObjectName("Secondary")
@@ -225,7 +268,11 @@ class LibraryPage(QWidget):
         self.btn_delete.clicked.connect(self._delete_selected)
         self.btn_open_dir.clicked.connect(self._open_selected_folder)
         self.btn_open_file.clicked.connect(self._open_selected_file)
+        self.btn_probe.clicked.connect(self._probe_selected)
+        self.table.itemSelectionChanged.connect(self._update_detail)
         self.scan_finished.connect(self._on_scan_finished)
+        if self._media_service is not None:
+            self._media_service.media_updated.connect(self._on_media_updated)
 
     # ---------- 查询 ----------
     def current_query(self) -> RecordingQuery:
@@ -266,6 +313,7 @@ class LibraryPage(QWidget):
             summary += f" 归档卷可用 {human_size(archive_disk['free'])}。"
         self.summary_label.setText(summary)
         self.status_label.setText("")
+        self._update_detail()
 
     def _populate(self, rows: list[dict]) -> None:
         self.table.setRowCount(len(rows))
@@ -308,6 +356,104 @@ class LibraryPage(QWidget):
                 return row
         return None
 
+    # ---------- 详情与媒体信息 ----------
+    def _update_detail(self) -> None:
+        row = self._selected_row()
+        if row is None:
+            self.preview_label.setText("暂无封面")
+            self.preview_label.setPixmap(QPixmap())
+            self.detail_label.setText("选择一条录制查看详情")
+            self.note_label.setText("")
+            return
+
+        resolution = "--"
+        if row.get("width") and row.get("height"):
+            resolution = f"{int(row['width'])}×{int(row['height'])}"
+        codecs = " / ".join(
+            value for value in (row.get("video_codec"), row.get("audio_codec")) if value
+        ) or "--"
+        duration = row.get("duration_s")
+        if duration is None:
+            duration_text = _duration_text(
+                row.get("started_at"), row.get("ended_at"), row.get("status") or ""
+            )
+        else:
+            total = max(0, int(float(duration)))
+            hours, remainder = divmod(total, 3600)
+            minutes, secs = divmod(remainder, 60)
+            duration_text = (
+                f"{hours}:{minutes:02d}:{secs:02d}"
+                if hours
+                else f"{minutes}:{secs:02d}"
+            )
+        meta_status = _METADATA_LABELS.get(
+            row.get("metadata_status") or "none", row.get("metadata_status") or "--"
+        )
+        lines = [
+            f"主播：{row.get('display_name_snapshot') or '--'}",
+            f"房间号：{row.get('web_rid_snapshot') or '--'}",
+            f"开始：{row.get('started_at') or '--'}",
+            f"时长：{duration_text}",
+            f"分辨率：{resolution}",
+            f"编码：{codecs}",
+            f"大小：{human_size(row.get('file_size'))}",
+            f"状态：{_STATUS_LABELS.get(row.get('status') or '', row.get('status') or '--')}",
+            f"归档：{_ARCHIVE_LABELS.get(row.get('archive_status') or '', row.get('archive_status') or '--')}",
+            f"媒体信息：{meta_status}",
+        ]
+        if row.get("metadata_error"):
+            lines.append(f"提示：{row['metadata_error']}")
+        self.detail_label.setText("\n".join(lines))
+
+        note = (row.get("note") or "").strip()
+        self.note_label.setText(f"备注：{note}" if note else "备注：--")
+        self.preview_label.setText("暂无封面")
+        self.preview_label.setPixmap(QPixmap())
+        thumbnail = row.get("thumbnail_path")
+        if thumbnail:
+            pixmap = QPixmap(str(thumbnail))
+            if not pixmap.isNull():
+                self.preview_label.setPixmap(
+                    pixmap.scaled(
+                        240,
+                        135,
+                        Qt.AspectRatioMode.KeepAspectRatio,
+                        Qt.TransformationMode.SmoothTransformation,
+                    )
+                )
+                self.preview_label.setText("")
+
+    def _on_media_updated(self, recording_id: int, payload: dict) -> None:
+        for row in self._rows:
+            if int(row.get("id", -1)) != int(recording_id):
+                continue
+            row.update(payload)
+            break
+        self._update_detail()
+        if payload.get("metadata_status") == "ready":
+            self.status_label.setText(f"媒体信息已更新：#{recording_id}")
+        elif payload.get("metadata_status") == "failed":
+            self.status_label.setText(
+                f"媒体信息提取失败：#{recording_id}（{payload.get('error') or '未知原因'}）"
+            )
+
+    def _probe_selected(self) -> None:
+        if self._media_service is None:
+            self.status_label.setText("当前运行方式未启用媒体信息提取")
+            return
+        row = self._selected_row()
+        if row is None:
+            self.status_label.setText("请先选择一条录制记录")
+            return
+        if row.get("status") == "recording":
+            self.status_label.setText("录制进行中，结束后再提取媒体信息")
+            return
+        recording_id = int(row.get("id"))
+        if self._media_service.enqueue(recording_id, force=True):
+            self.status_label.setText(f"已提交媒体信息提取：#{recording_id}")
+        else:
+            self.status_label.setText(f"#{recording_id} 已在提取队列中")
+
     # ---------- 打开文件 ----------
     def _open_selected_folder(self) -> None:
         row = self._selected_row()
@@ -327,6 +473,10 @@ class LibraryPage(QWidget):
             self.status_label.setText("请先选择一条录制记录")
             return
         path = Path(row.get("file_path") or "")
+        if not path.is_file():
+            archived = row.get("archive_path")
+            if archived and Path(archived).is_file():
+                path = Path(archived)
         if not path.is_file():
             self.status_label.setText(f"文件不存在：{path}")
             return

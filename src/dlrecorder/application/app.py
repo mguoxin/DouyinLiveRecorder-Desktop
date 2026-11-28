@@ -28,10 +28,12 @@ from ..infrastructure.config import AppConfig
 from ..infrastructure.db import Database
 from ..infrastructure.http_client import UrllibHttpClient
 from ..infrastructure.logging_config import setup_logging
+from ..infrastructure.media_probe import MediaProber
 from ..infrastructure.process_registry import ProcessRegistry
 from ..presentation.main_window import MainWindow
 from ..presentation.theme import ThemeManager, install_chinese_translations
 from .archive_service import ArchiveService
+from .media_probe_service import MediaProbeService
 from .monitor_service import MonitorService
 from .recording_service import RecordingService, StreamRefresh
 from .settings_service import AppSettings, SettingsService
@@ -158,6 +160,12 @@ class Application:
             self.db, settings_provider=self._archive_settings
         )
         self.archive.recover_pending()
+        self.media = MediaProbeService(
+            self.db,
+            thumbnails_dir=self.config.data_dir / "thumbnails",
+            prober_factory=self._build_prober,
+        )
+        self.media.enqueue_pending()
         self._auto_record = self.db.get_setting(AUTO_RECORD_SETTING, "0") == "1"
         self._auto_pending: set[int] = set()
         # 用户手动停止过录制的房间：在下一次确认下播或再次手动开始前不再自动启动。
@@ -174,6 +182,7 @@ class Application:
             on_settings_applied=self._apply_settings,
             theme_manager=self.theme,
             log_dir=self.config.log_dir,
+            media_service=self.media,
         )
         self.main_window.auto_record_toggled.connect(self._set_auto_record)
         self.main_window.recording_stop_requested.connect(
@@ -253,13 +262,22 @@ class Application:
     def _on_recording_finished(self, room_id: int, snapshot: dict) -> None:
         self._auto_pending.discard(room_id)
         recording_id = snapshot.get("recording_id")
-        if (
-            self._current_settings.archive_enabled
-            and snapshot.get("status") == "completed"
+        completed = (
+            snapshot.get("status") == "completed"
             and not snapshot.get("will_retry")
             and recording_id is not None
+        )
+        if completed:
+            # 元数据提取与归档互不依赖；探测会回退到归档副本。
+            self.media.enqueue(int(recording_id))
+        if (
+            self._current_settings.archive_enabled
+            and completed
         ):
             self.archive.enqueue(int(recording_id))
+
+    def _build_prober(self) -> MediaProber:
+        return MediaProber(ffmpeg_path=self._current_settings.ffmpeg_path)
 
     def _archive_settings(self) -> ArchiveSettings:
         return ArchiveSettings(
@@ -280,6 +298,7 @@ class Application:
             self.recording.set_ffmpeg_path(settings.ffmpeg_path)
             self.recording.set_output_dir(settings.recordings_dir)
             self.recording.set_min_free_mb(settings.min_free_mb)
+            self.media.reset_tool()
             self.service.set_monitor_interval(settings.monitor_interval_s)
             if hasattr(self.parser, "set_quality"):
                 self.parser.set_quality(settings.quality)
@@ -316,6 +335,10 @@ class Application:
                 "录制服务未完全退出，remaining_active=%s", report.remaining_active
             )
         logger.info("录制服务阶段完成 耗时=%.2fs", time.monotonic() - started)
+        stage = time.monotonic()
+        if not self.media.shutdown():
+            logger.critical("媒体探测服务未在超时内退出")
+        logger.info("媒体探测阶段完成 耗时=%.2fs", time.monotonic() - stage)
         stage = time.monotonic()
         if not self.archive.shutdown():
             logger.critical("归档服务未在超时内退出")
