@@ -113,7 +113,9 @@ class MainWindow(QMainWindow):
 
         self.setWindowTitle(f"抖音直播录制工具 v{__version__}")
         self.resize(1120, 740)
-        self.setMinimumSize(900, 600)
+        # 1024×640 是实测可完整显示各页面工具栏与统计卡片的最小尺寸；
+        # 更窄时统计卡片与页头按钮会互相挤压并被裁剪。
+        self.setMinimumSize(1024, 640)
         self.setWindowIcon(icons.app_icon())
 
         # 日志桥接（处理器由 QtLogBridge 自行挂载，关闭时必须解除）
