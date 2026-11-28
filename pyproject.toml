@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "dlrecorder"
-version = "0.4.2"
+version = "0.5.0"
 description = "轻量级抖音直播监控与录制工具（Windows 桌面版）"
 requires-python = ">=3.12"
 dependencies = [
