@@ -23,8 +23,8 @@
 ### 验证状态
 
 - 自动化回归：**566 passed / 0 failed / 0 skipped**（Windows 11，Python 3.12.16）。
-- 打包候选：见 `docs/releases/v1.0.0/V1.0.0-DELIVERY-REPORT.md`（构建基线、SHA-256、端到端结果）。
-- 未验证项与风险在交付报告的“未解决问题/发布风险”章节如实列出。
+- 打包候选：`DouyinLiveRecorder-v1.0.0-candidate.zip`（109,699,513 字节，SHA-256 `B59250227EBE51D7CBF283121F6555416FB3BB78913EFF485FA9DBB914A40C96`），完成 11 步 Mock 闭环与 3 分钟 soak（RSS +0.1 MB，退出码 0）。
+- 未验证项与风险在 `docs/releases/v1.0.0/V1.0.0-DELIVERY-REPORT.md` 的“未解决问题/发布风险”章节如实列出。
 
 ## [0.5.0] - 候选（2026-11-28）
 
