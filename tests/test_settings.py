@@ -204,6 +204,88 @@ def test_invalid_stored_quality_falls_back(service):
     assert settings_service.load().quality == "UHD"
 
 
+def test_archive_defaults_and_roundtrip(service, monkeypatch):
+    settings_service, db, config = service
+    monkeypatch.setattr(
+        "dlrecorder.application.settings_service.find_local_ffmpeg", lambda: "ffmpeg"
+    )
+    current = settings_service.load()
+    assert current.archive_enabled is False
+    assert current.archive_delete_source is False
+    assert current.archive_root_dir == (config.data_dir / "archive").absolute()
+    assert current.archive_folder_template == "{anchor}/{date}"
+    assert current.archive_name_template == "{date}_{time}_{anchor}_{web_rid}"
+
+    archive_dir = config.data_dir / "custom-archive"
+    saved = settings_service.save(
+        AppSettings(
+            "ffmpeg",
+            config.recordings_dir,
+            60.0,
+            128,
+            "HD",
+            archive_enabled=True,
+            archive_root_dir=archive_dir,
+            archive_folder_template="{web_rid}/{date}",
+            archive_name_template="{time}_{anchor}",
+            archive_delete_source=False,
+        )
+    )
+    assert saved.archive_enabled is True
+    assert saved.archive_root_dir == archive_dir.absolute()
+    assert archive_dir.is_dir()
+    assert db.get_setting("archive.enabled") == "1"
+    assert settings_service.load() == saved
+
+
+def test_archive_invalid_template_rejected_without_writing(service, tmp_path):
+    settings_service, db, config = service
+    base = AppSettings(
+        "ffmpeg",
+        config.recordings_dir,
+        60.0,
+        128,
+        "HD",
+        archive_enabled=True,
+        archive_root_dir=tmp_path / "archive",
+    )
+    with pytest.raises(ValueError):
+        settings_service.save(
+            AppSettings(
+                base.ffmpeg_path,
+                base.recordings_dir,
+                base.monitor_interval_s,
+                base.min_free_mb,
+                base.quality,
+                archive_enabled=True,
+                archive_root_dir=base.archive_root_dir,
+                archive_folder_template="../outside",
+            )
+        )
+    assert db.get_setting("archive.enabled", "") == ""
+    assert db.get_setting("archive.folder_template", "") == ""
+
+
+def test_legacy_settings_without_archive_use_default_root(service):
+    settings_service, db, config = service
+    saved = settings_service.save(
+        AppSettings("ffmpeg", config.recordings_dir, 60.0, 128)
+    )
+    assert saved.archive_root_dir == (config.data_dir / "archive").absolute()
+    assert saved.archive_enabled is False
+
+
+def test_invalid_stored_archive_values_fall_back(service):
+    settings_service, db, config = service
+    db.set_setting("archive.enabled", "maybe")
+    db.set_setting("archive.folder_template", "../escape")
+    db.set_setting("archive.root_dir", "")
+    current = settings_service.load()
+    assert current.archive_enabled is False
+    assert current.archive_folder_template == "{anchor}/{date}"
+    assert current.archive_root_dir == (config.data_dir / "archive").absolute()
+
+
 def test_validate_cookie_rules():
     from dlrecorder.application.settings_service import validate_cookie
 

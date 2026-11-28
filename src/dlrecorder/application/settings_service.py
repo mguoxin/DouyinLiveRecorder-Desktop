@@ -12,6 +12,12 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Optional
 
+from ..domain.archive_rules import (
+    DEFAULT_FOLDER_TEMPLATE,
+    DEFAULT_NAME_TEMPLATE,
+    ArchiveRuleError,
+    validate_template,
+)
 from ..infrastructure.config import AppConfig
 from ..infrastructure.credential_store import CredentialStore
 from ..infrastructure.db import Database
@@ -24,6 +30,11 @@ KEY_RECORDINGS_DIR = "recording.output_dir"
 KEY_MONITOR_INTERVAL = "monitor.interval_s"
 KEY_MIN_FREE_MB = "storage.min_free_mb"
 KEY_QUALITY = "recording.quality"
+KEY_ARCHIVE_ENABLED = "archive.enabled"
+KEY_ARCHIVE_ROOT_DIR = "archive.root_dir"
+KEY_ARCHIVE_FOLDER_TEMPLATE = "archive.folder_template"
+KEY_ARCHIVE_NAME_TEMPLATE = "archive.name_template"
+KEY_ARCHIVE_DELETE_SOURCE = "archive.delete_source"
 
 DEFAULT_MONITOR_INTERVAL_S = 120.0
 DEFAULT_MIN_FREE_MB = 512
@@ -56,6 +67,11 @@ class AppSettings:
     monitor_interval_s: float
     min_free_mb: int
     quality: str = DEFAULT_QUALITY
+    archive_enabled: bool = False
+    archive_root_dir: Path = Path("")
+    archive_folder_template: str = DEFAULT_FOLDER_TEMPLATE
+    archive_name_template: str = DEFAULT_NAME_TEMPLATE
+    archive_delete_source: bool = False
 
 
 def validate_ffmpeg_path(value: str) -> str:
@@ -106,6 +122,43 @@ def validate_min_free_mb(value: Any) -> int:
     if not (0 <= number <= MAX_MIN_FREE_MB):
         raise ValueError(f"磁盘最低剩余空间需在 0-{MAX_MIN_FREE_MB} MB 之间")
     return number
+
+
+def validate_bool(value: Any) -> bool:
+    text = str(value or "").strip().lower()
+    if text in {"1", "true", "yes", "on", "开启", "是"}:
+        return True
+    if text in {"0", "false", "no", "off", "关闭", "否", ""}:
+        return False
+    raise ValueError("开关值必须是 0/1 或 true/false")
+
+
+def validate_archive_root_dir(value: Any) -> Path:
+    text = str(value or "").strip()
+    if not text:
+        raise ValueError("归档目录不能为空")
+    path = Path(text).expanduser()
+    try:
+        path.mkdir(parents=True, exist_ok=True)
+    except OSError as e:
+        raise ValueError(f"归档目录无法创建: {e}") from e
+    if not path.is_dir():
+        raise ValueError("归档目录不是有效文件夹")
+    return path.absolute()
+
+
+def validate_archive_folder_template(value: Any) -> str:
+    try:
+        return validate_template(str(value or ""), field="归档目录模板")
+    except ArchiveRuleError as e:
+        raise ValueError(str(e)) from e
+
+
+def validate_archive_name_template(value: Any) -> str:
+    try:
+        return validate_template(str(value or ""), field="归档文件名模板")
+    except ArchiveRuleError as e:
+        raise ValueError(str(e)) from e
 
 
 def validate_quality(value: Any) -> str:
@@ -159,6 +212,11 @@ class SettingsService:
             monitor_interval_s=DEFAULT_MONITOR_INTERVAL_S,
             min_free_mb=DEFAULT_MIN_FREE_MB,
             quality=DEFAULT_QUALITY,
+            archive_enabled=False,
+            archive_root_dir=(self._config.data_dir / "archive").absolute(),
+            archive_folder_template=DEFAULT_FOLDER_TEMPLATE,
+            archive_name_template=DEFAULT_NAME_TEMPLATE,
+            archive_delete_source=False,
         )
 
     def load(self) -> AppSettings:
@@ -182,6 +240,29 @@ class SettingsService:
             quality=self._load_value(
                 KEY_QUALITY, defaults.quality, validate_quality
             ),
+            archive_enabled=self._load_value(
+                KEY_ARCHIVE_ENABLED, defaults.archive_enabled, validate_bool
+            ),
+            archive_root_dir=self._load_value(
+                KEY_ARCHIVE_ROOT_DIR,
+                defaults.archive_root_dir,
+                validate_archive_root_dir,
+            ),
+            archive_folder_template=self._load_value(
+                KEY_ARCHIVE_FOLDER_TEMPLATE,
+                defaults.archive_folder_template,
+                validate_archive_folder_template,
+            ),
+            archive_name_template=self._load_value(
+                KEY_ARCHIVE_NAME_TEMPLATE,
+                defaults.archive_name_template,
+                validate_archive_name_template,
+            ),
+            archive_delete_source=self._load_value(
+                KEY_ARCHIVE_DELETE_SOURCE,
+                defaults.archive_delete_source,
+                validate_bool,
+            ),
         )
         # 旧版本可能保存了默认命令名；若项目内已内置 FFmpeg，则优先使用内置版本。
         if current.ffmpeg_path in {"ffmpeg", "ffmpeg.exe"}:
@@ -202,12 +283,25 @@ class SettingsService:
 
     def save(self, settings: AppSettings) -> AppSettings:
         """校验并持久化全部设置；任一项非法则整体不写入。"""
+        archive_root = settings.archive_root_dir
+        # 兼容未显式提供归档目录的旧调用方：回退到数据目录下的默认归档目录。
+        if str(archive_root or "").strip() in {"", "."}:
+            archive_root = self.defaults().archive_root_dir
         normalized = AppSettings(
             ffmpeg_path=validate_ffmpeg_path(settings.ffmpeg_path),
             recordings_dir=validate_recordings_dir(settings.recordings_dir),
             monitor_interval_s=validate_monitor_interval(settings.monitor_interval_s),
             min_free_mb=validate_min_free_mb(settings.min_free_mb),
             quality=validate_quality(settings.quality),
+            archive_enabled=validate_bool(settings.archive_enabled),
+            archive_root_dir=validate_archive_root_dir(archive_root),
+            archive_folder_template=validate_archive_folder_template(
+                settings.archive_folder_template
+            ),
+            archive_name_template=validate_archive_name_template(
+                settings.archive_name_template
+            ),
+            archive_delete_source=validate_bool(settings.archive_delete_source),
         )
         self._db.set_setting(KEY_FFMPEG_PATH, normalized.ffmpeg_path)
         self._db.set_setting(KEY_RECORDINGS_DIR, str(normalized.recordings_dir))
@@ -216,13 +310,30 @@ class SettingsService:
         )
         self._db.set_setting(KEY_MIN_FREE_MB, str(normalized.min_free_mb))
         self._db.set_setting(KEY_QUALITY, normalized.quality)
+        self._db.set_setting(
+            KEY_ARCHIVE_ENABLED, "1" if normalized.archive_enabled else "0"
+        )
+        self._db.set_setting(KEY_ARCHIVE_ROOT_DIR, str(normalized.archive_root_dir))
+        self._db.set_setting(
+            KEY_ARCHIVE_FOLDER_TEMPLATE, normalized.archive_folder_template
+        )
+        self._db.set_setting(
+            KEY_ARCHIVE_NAME_TEMPLATE, normalized.archive_name_template
+        )
+        self._db.set_setting(
+            KEY_ARCHIVE_DELETE_SOURCE,
+            "1" if normalized.archive_delete_source else "0",
+        )
         logger.info(
-            "设置已保存: ffmpeg=%s recordings=%s interval=%ss min_free=%sMB quality=%s",
+            "设置已保存: ffmpeg=%s recordings=%s interval=%ss min_free=%sMB quality=%s "
+            "archive=%s root=%s",
             normalized.ffmpeg_path,
             normalized.recordings_dir,
             normalized.monitor_interval_s,
             normalized.min_free_mb,
             normalized.quality,
+            normalized.archive_enabled,
+            normalized.archive_root_dir,
         )
         return normalized
 

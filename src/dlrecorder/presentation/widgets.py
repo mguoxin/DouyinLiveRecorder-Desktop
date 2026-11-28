@@ -961,6 +961,7 @@ class SettingsPanel(QWidget):
             outer.addWidget(self._build_appearance_card())
         outer.addWidget(self._build_recording_card(current))
         outer.addWidget(self._build_storage_card(current))
+        outer.addWidget(self._build_archive_card(current))
         outer.addWidget(self._build_account_card(current))
 
         self.error_label = QLabel("")
@@ -973,6 +974,7 @@ class SettingsPanel(QWidget):
         self.btn_browse_ffmpeg.clicked.connect(self._on_browse_ffmpeg)
         self.btn_detect_ffmpeg.clicked.connect(self._on_detect_ffmpeg)
         self.btn_browse_output.clicked.connect(self._on_browse_output)
+        self.btn_browse_archive.clicked.connect(self._on_browse_archive)
         self.btn_import_cookie.clicked.connect(self._on_import_cookie)
         self.btn_clear_cookie.clicked.connect(self._on_clear_cookie)
         self.chk_show_cookie.toggled.connect(self._on_toggle_cookie_visible)
@@ -1093,6 +1095,54 @@ class SettingsPanel(QWidget):
 
         hint = QLabel("最低剩余空间为 0 表示不检查。")
         hint.setObjectName("Muted")
+        layout.addWidget(hint)
+        return card
+
+    def _build_archive_card(self, current: AppSettings) -> QFrame:
+        card, layout = self._card(
+            "归档",
+            "录制结束后可自动整理到归档目录；默认保留源文件，校验通过才写入目标。",
+        )
+        form = QFormLayout()
+        form.setSpacing(9)
+        form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
+
+        self.chk_archive_enabled = QCheckBox("录制结束后自动归档")
+        self.chk_archive_enabled.setChecked(current.archive_enabled)
+
+        self.archive_root_edit = QLineEdit(str(current.archive_root_dir))
+        self.btn_browse_archive = QPushButton("浏览...")
+        archive_row = QHBoxLayout()
+        archive_row.setSpacing(8)
+        archive_row.addWidget(self.archive_root_edit, 1)
+        archive_row.addWidget(self.btn_browse_archive)
+
+        self.archive_folder_edit = QLineEdit(current.archive_folder_template)
+        self.archive_name_edit = QLineEdit(current.archive_name_template)
+        self.archive_folder_edit.setPlaceholderText("{anchor}/{date}")
+        self.archive_name_edit.setPlaceholderText(
+            "{date}_{time}_{anchor}_{web_rid}"
+        )
+
+        self.chk_archive_delete_source = QCheckBox(
+            "归档校验通过后删除源文件（不可恢复，默认关闭）"
+        )
+        self.chk_archive_delete_source.setChecked(current.archive_delete_source)
+
+        form.addRow("自动归档", self.chk_archive_enabled)
+        form.addRow("归档目录", archive_row)
+        form.addRow("目录模板", self.archive_folder_edit)
+        form.addRow("文件名模板", self.archive_name_edit)
+        form.addRow("", self.chk_archive_delete_source)
+        layout.addLayout(form)
+
+        hint = QLabel(
+            "可用占位符：{anchor} 主播、{web_rid} 房间号、{date} 日期、"
+            "{time} 时间、{session_id} 会话、{recording_id} 录制编号。"
+            "录制中的文件不会被移动。"
+        )
+        hint.setObjectName("Muted")
+        hint.setWordWrap(True)
         layout.addWidget(hint)
         return card
 
@@ -1235,6 +1285,13 @@ class SettingsPanel(QWidget):
         if path:
             self.output_edit.setText(path)
 
+    def _on_browse_archive(self) -> None:
+        path = choose_directory(
+            self, "选择归档目录", self.archive_root_edit.text()
+        )
+        if path:
+            self.archive_root_edit.setText(path)
+
     @staticmethod
     def _set_status_role(label: QLabel, object_name: str) -> None:
         label.setObjectName(object_name)
@@ -1256,6 +1313,11 @@ class SettingsPanel(QWidget):
             monitor_interval_s=float(self.interval_spin.value()),
             min_free_mb=self.min_free_spin.value(),
             quality=self.quality_combo.currentData(),
+            archive_enabled=self.chk_archive_enabled.isChecked(),
+            archive_root_dir=Path(self.archive_root_edit.text()),
+            archive_folder_template=self.archive_folder_edit.text(),
+            archive_name_template=self.archive_name_edit.text(),
+            archive_delete_source=self.chk_archive_delete_source.isChecked(),
         )
         try:
             saved = self._service.save(candidate)

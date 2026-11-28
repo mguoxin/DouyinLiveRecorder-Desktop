@@ -18,6 +18,7 @@ from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import QApplication
 
 from .. import __version__
+from ..domain.archive_rules import ArchiveSettings
 from ..domain.states import ParseResult
 from ..douyin.engine.parser import EngineDouyinParser
 from ..douyin.parser import DouyinParser, MockParser, RealDouyinParser
@@ -29,6 +30,7 @@ from ..infrastructure.logging_config import setup_logging
 from ..infrastructure.process_registry import ProcessRegistry
 from ..presentation.main_window import MainWindow
 from ..presentation.theme import ThemeManager, install_chinese_translations
+from .archive_service import ArchiveService
 from .monitor_service import MonitorService
 from .recording_service import RecordingService, StreamRefresh
 from .settings_service import AppSettings, SettingsService
@@ -147,6 +149,11 @@ class Application:
         )
         options.setdefault("process_registry", self.process_registry)
         self.recording = RecordingService(self.db, **options)
+        self._current_settings = current
+        self.archive = ArchiveService(
+            self.db, settings_provider=self._archive_settings
+        )
+        self.archive.recover_pending()
         self._auto_record = self.db.get_setting(AUTO_RECORD_SETTING, "0") == "1"
         self._auto_pending: set[int] = set()
         # 用户手动停止过录制的房间：在下一次确认下播或再次手动开始前不再自动启动。
@@ -241,12 +248,30 @@ class Application:
 
     def _on_recording_finished(self, room_id: int, snapshot: dict) -> None:
         self._auto_pending.discard(room_id)
+        recording_id = snapshot.get("recording_id")
+        if (
+            self._current_settings.archive_enabled
+            and snapshot.get("status") == "completed"
+            and not snapshot.get("will_retry")
+            and recording_id is not None
+        ):
+            self.archive.enqueue(int(recording_id))
+
+    def _archive_settings(self) -> ArchiveSettings:
+        return ArchiveSettings(
+            enabled=self._current_settings.archive_enabled,
+            root_dir=self._current_settings.archive_root_dir,
+            folder_template=self._current_settings.archive_folder_template,
+            name_template=self._current_settings.archive_name_template,
+            delete_source=self._current_settings.archive_delete_source,
+        )
 
     def _on_recording_error(self, room_id: int, message: str) -> None:
         self._auto_pending.discard(room_id)
 
     def _apply_settings(self, settings: AppSettings) -> None:
         """将已保存的设置应用到运行中的服务（不中断进行中的录制）。"""
+        self._current_settings = settings
         try:
             self.recording.set_ffmpeg_path(settings.ffmpeg_path)
             self.recording.set_output_dir(settings.recordings_dir)
@@ -287,6 +312,10 @@ class Application:
                 "录制服务未完全退出，remaining_active=%s", report.remaining_active
             )
         logger.info("录制服务阶段完成 耗时=%.2fs", time.monotonic() - started)
+        stage = time.monotonic()
+        if not self.archive.shutdown():
+            logger.critical("归档服务未在超时内退出")
+        logger.info("归档服务阶段完成 耗时=%.2fs", time.monotonic() - stage)
         stage = time.monotonic()
         self.service.shutdown()
         logger.info(
