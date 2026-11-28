@@ -28,6 +28,7 @@ from ..infrastructure.config import AppConfig
 from ..infrastructure.db import Database
 from ..infrastructure.http_client import UrllibHttpClient
 from ..infrastructure.logging_config import setup_logging
+from ..infrastructure.disk import free_space_mb
 from ..infrastructure.media_probe import MediaProber
 from ..infrastructure.process_registry import ProcessRegistry
 from ..presentation.main_window import MainWindow
@@ -36,6 +37,7 @@ from .archive_service import ArchiveService
 from .media_probe_service import MediaProbeService
 from .monitor_service import MonitorService
 from .recording_service import RecordingService, StreamRefresh
+from .rule_engine import RuleActions, RuleEngine
 from .settings_service import AppSettings, SettingsService
 
 logger = logging.getLogger(__name__)
@@ -170,6 +172,8 @@ class Application:
         self._auto_pending: set[int] = set()
         # 用户手动停止过录制的房间：在下一次确认下播或再次手动开始前不再自动启动。
         self._auto_suppressed: set[int] = set()
+        # 规则引擎最近一次启动请求的时间，避免异步启动期间重复请求。
+        self._rule_requested: dict[tuple[str, int], float] = {}
         self._shutdown_done = False
         self._connect_recording()
 
@@ -188,6 +192,12 @@ class Application:
         self.main_window.recording_stop_requested.connect(
             self._on_manual_stop_requested
         )
+        self.rules = RuleEngine(self.db, self._build_rule_actions())
+        if self.main_window.automation_page is not None:
+            self.rules.rule_run_recorded.connect(
+                self.main_window.automation_page.on_run_recorded
+            )
+        self.rules.start()
 
     def _refresh_stream(self, web_rid: str) -> StreamRefresh:
         """重新解析房间，供录制中断后的自动续录使用（在录制线程中同步调用）。"""
@@ -270,14 +280,95 @@ class Application:
         if completed:
             # 元数据提取与归档互不依赖；探测会回退到归档副本。
             self.media.enqueue(int(recording_id))
-        if (
-            self._current_settings.archive_enabled
-            and completed
-        ):
-            self.archive.enqueue(int(recording_id))
+            rules = getattr(self, "rules", None)
+            if rules is not None:
+                rules.on_recording_finished(
+                    int(recording_id), room_id, "completed"
+                )
+            decision = (
+                rules.archive_decision(room_id) if rules is not None else None
+            )
+            should_archive = (
+                self._current_settings.archive_enabled
+                if decision is None
+                else decision
+            )
+            if should_archive:
+                self.archive.enqueue(int(recording_id))
 
     def _build_prober(self) -> MediaProber:
         return MediaProber(ffmpeg_path=self._current_settings.ffmpeg_path)
+
+    # ---------- 自动化规则 ----------
+    def _build_rule_actions(self) -> RuleActions:
+        return RuleActions(
+            is_monitoring=self.service.is_monitoring,
+            start_monitor=self._rule_start_monitor,
+            stop_monitor=self._rule_stop_monitor,
+            is_recording=self.recording.is_recording,
+            start_recording=self._rule_start_recording,
+            stop_recording=self._rule_stop_recording,
+            has_stream=lambda room_id: bool(self.service.get_stream_url(room_id)),
+            notify=self._rule_notify,
+            free_space_mb=lambda: free_space_mb(self.recording.output_dir),
+        )
+
+    def _rule_start_monitor(self, room_id: int) -> bool:
+        key = ("monitor", room_id)
+        now = time.monotonic()
+        if self.service.is_monitoring(room_id):
+            self._rule_requested.pop(key, None)
+            return True
+        if now - self._rule_requested.get(key, 0.0) < 30:
+            return True
+        try:
+            self.service.start_monitor(room_id)
+        except Exception:  # noqa: BLE001 - 规则执行失败由引擎记录
+            logger.exception("规则启动监控失败 room_id=%s", room_id)
+            return False
+        self._rule_requested[key] = now
+        return True
+
+    def _rule_stop_monitor(self, room_id: int) -> bool:
+        self._rule_requested.pop(("monitor", room_id), None)
+        try:
+            self.service.stop_monitor(room_id)
+        except Exception:  # noqa: BLE001
+            logger.exception("规则停止监控失败 room_id=%s", room_id)
+            return False
+        return True
+
+    def _rule_start_recording(self, room_id: int) -> bool:
+        key = ("recording", room_id)
+        now = time.monotonic()
+        if self.recording.is_recording(room_id):
+            self._rule_requested.pop(key, None)
+            return True
+        if now - self._rule_requested.get(key, 0.0) < 60:
+            return True
+        stream_url = self.service.get_stream_url(room_id)
+        if not stream_url:
+            return False
+        try:
+            self.recording.start_recording(room_id, stream_url)
+        except Exception:  # noqa: BLE001
+            logger.exception("规则启动录制失败 room_id=%s", room_id)
+            return False
+        self._rule_requested[key] = now
+        return True
+
+    def _rule_stop_recording(self, room_id: int) -> bool:
+        self._rule_requested.pop(("recording", room_id), None)
+        try:
+            self.recording.stop_recording(room_id)
+        except Exception:  # noqa: BLE001
+            logger.exception("规则停止录制失败 room_id=%s", room_id)
+            return False
+        return True
+
+    def _rule_notify(self, title: str, message: str) -> None:
+        logger.warning("自动化通知：%s - %s", title, message)
+        self.main_window.rule_notification.emit(title, message)
 
     def _archive_settings(self) -> ArchiveSettings:
         return ArchiveSettings(
@@ -328,6 +419,10 @@ class Application:
         self._shutdown_done = True
         started = time.monotonic()
         logger.info("应用关闭中...")
+        # 先停止规则引擎，避免关闭过程中再触发新的监控/录制请求。
+        rules = getattr(self, "rules", None)
+        if rules is not None and not rules.shutdown():
+            logger.critical("规则引擎未在超时内退出")
         # 录制进程先停，避免数据库关闭后仍有录制线程写入。
         report = self.recording.shutdown()
         if not report.thread_exited:

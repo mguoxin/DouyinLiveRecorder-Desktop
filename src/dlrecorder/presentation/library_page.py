@@ -12,6 +12,8 @@ from PySide6.QtGui import QDesktopServices, QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
+    QDialog,
+    QDialogButtonBox,
     QFileDialog,
     QFormLayout,
     QFrame,
@@ -19,7 +21,10 @@ from PySide6.QtWidgets import (
     QHeaderView,
     QLabel,
     QLineEdit,
+    QListWidget,
+    QListWidgetItem,
     QMessageBox,
+    QPlainTextEdit,
     QPushButton,
     QTableWidget,
     QTableWidgetItem,
@@ -40,7 +45,16 @@ from .theme import ThemeTokens
 logger = logging.getLogger(__name__)
 
 COLUMNS = (
-    "ID", "主播", "房间号", "开始时间", "时长", "大小", "状态", "归档", "文件路径"
+    "ID", "主播", "房间号", "开始时间", "时长", "大小", "状态", "归档", "收藏", "文件路径"
+)
+
+_SORT_OPTIONS = (
+    ("最新优先", "newest"),
+    ("最早优先", "oldest"),
+    ("文件最大", "largest"),
+    ("文件最小", "smallest"),
+    ("时长最长", "longest"),
+    ("时长最短", "shortest"),
 )
 
 _STATUS_LABELS = {
@@ -102,6 +116,140 @@ def _duration_text(started: Optional[str], ended: Optional[str], status: str) ->
     return f"{minutes}:{secs:02d}"
 
 
+class _TagDialog(QDialog):
+    """选择与新建录制标签。"""
+
+    def __init__(
+        self,
+        service: RecordingLibraryService,
+        tags: list[dict],
+        selected_ids: list[int],
+        parent: Optional[QWidget] = None,
+    ) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("录制标签")
+        self.setMinimumWidth(320)
+        self._service = service
+        self._selected = {int(value) for value in selected_ids}
+
+        layout = QVBoxLayout(self)
+        layout.setSpacing(8)
+        self.list_widget = QListWidget()
+        layout.addWidget(self.list_widget, 1)
+        for tag in tags:
+            self._add_item(tag)
+
+        row = QHBoxLayout()
+        self.new_edit = QLineEdit()
+        self.new_edit.setPlaceholderText("新标签名称")
+        self.btn_add = QPushButton("添加标签")
+        row.addWidget(self.new_edit, 1)
+        row.addWidget(self.btn_add)
+        layout.addLayout(row)
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        buttons.button(QDialogButtonBox.StandardButton.Ok).setText("确定")
+        buttons.button(QDialogButtonBox.StandardButton.Cancel).setText("取消")
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        self.btn_add.clicked.connect(self._create_tag)
+        self.new_edit.returnPressed.connect(self._create_tag)
+        layout.addWidget(buttons)
+
+    def _add_item(self, tag: dict) -> None:
+        item = QListWidgetItem(str(tag.get("name") or ""))
+        tag_id = int(tag.get("id"))
+        item.setData(Qt.ItemDataRole.UserRole, tag_id)
+        item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+        item.setCheckState(
+            Qt.CheckState.Checked
+            if tag_id in self._selected
+            else Qt.CheckState.Unchecked
+        )
+        self.list_widget.addItem(item)
+
+    def _create_tag(self) -> None:
+        name = self.new_edit.text().strip()
+        if not name:
+            return
+        try:
+            tag_id = self._service.create_tag(name)
+        except ValueError as exc:
+            QMessageBox.warning(self, "无法添加标签", str(exc))
+            return
+        self._selected.add(tag_id)
+        self._add_item({"id": tag_id, "name": name})
+        self.new_edit.clear()
+
+    def selected_tag_ids(self) -> list[int]:
+        ids: list[int] = []
+        for index in range(self.list_widget.count()):
+            item = self.list_widget.item(index)
+            if item.checkState() == Qt.CheckState.Checked:
+                ids.append(int(item.data(Qt.ItemDataRole.UserRole)))
+        return ids
+
+
+class _AnchorProfileDialog(QDialog):
+    """编辑主播档案（简介、备注、头像路径）。"""
+
+    def __init__(self, profile: Optional[dict], parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("主播档案")
+        self.setMinimumWidth(380)
+        profile = profile or {}
+        layout = QVBoxLayout(self)
+        form = QFormLayout()
+        form.setSpacing(8)
+
+        self.bio_edit = QLineEdit(str(profile.get("bio") or ""))
+        self.bio_edit.setPlaceholderText("一句话简介")
+        form.addRow("简介", self.bio_edit)
+
+        avatar_row = QHBoxLayout()
+        self.avatar_edit = QLineEdit(str(profile.get("avatar_path") or ""))
+        self.avatar_edit.setPlaceholderText("可选，本地图片路径")
+        self.btn_browse = QPushButton("浏览…")
+        avatar_row.addWidget(self.avatar_edit, 1)
+        avatar_row.addWidget(self.btn_browse)
+        form.addRow("头像", avatar_row)
+
+        self.note_edit = QPlainTextEdit(str(profile.get("note") or ""))
+        self.note_edit.setPlaceholderText("备注、风格偏好、联系方式等")
+        self.note_edit.setFixedHeight(96)
+        form.addRow("备注", self.note_edit)
+        layout.addLayout(form)
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        buttons.button(QDialogButtonBox.StandardButton.Ok).setText("保存")
+        buttons.button(QDialogButtonBox.StandardButton.Cancel).setText("取消")
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        self.btn_browse.clicked.connect(self._browse)
+        layout.addWidget(buttons)
+
+    def _browse(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "选择头像图片",
+            "",
+            "图片 (*.png *.jpg *.jpeg *.webp *.bmp)",
+        )
+        if path:
+            self.avatar_edit.setText(path)
+
+    def values(self) -> tuple[str, str, str]:
+        return (
+            self.avatar_edit.text().strip(),
+            self.bio_edit.text().strip(),
+            self.note_edit.toPlainText().strip(),
+        )
+
+
 class LibraryPage(QWidget):
     """录制库页面；所有磁盘检查与删除都经过服务层的安全约束。"""
 
@@ -135,6 +283,9 @@ class LibraryPage(QWidget):
         self.btn_scan = QPushButton("一致性检查")
         self.btn_open_dir = QPushButton("打开所在目录")
         self.btn_open_file = QPushButton("打开文件")
+        self.btn_favorite = QPushButton("收藏所选")
+        self.btn_tags = QPushButton("标签…")
+        self.btn_profile = QPushButton("主播档案…")
         self.btn_delete = QPushButton("删除所选…")
         self.btn_delete.setProperty("variant", "danger")
         for button in (
@@ -142,6 +293,9 @@ class LibraryPage(QWidget):
             self.btn_scan,
             self.btn_open_dir,
             self.btn_open_file,
+            self.btn_favorite,
+            self.btn_tags,
+            self.btn_profile,
             self.btn_delete,
         ):
             header.addWidget(button)
@@ -180,6 +334,18 @@ class LibraryPage(QWidget):
             ("已跳过", "skipped"),
         ):
             self.archive_combo.addItem(label, value)
+        self.favorite_combo = QComboBox()
+        for label, value in (
+            ("全部收藏", ""),
+            ("仅收藏", "yes"),
+            ("未收藏", "no"),
+        ):
+            self.favorite_combo.addItem(label, value)
+        self.tag_combo = QComboBox()
+        self.tag_combo.addItem("全部标签", 0)
+        self.sort_combo = QComboBox()
+        for label, value in _SORT_OPTIONS:
+            self.sort_combo.addItem(label, value)
         self.btn_search = QPushButton("检索")
         self.btn_search.setProperty("variant", "primary")
 
@@ -197,6 +363,9 @@ class LibraryPage(QWidget):
         status_row.setSpacing(8)
         status_row.addWidget(self.status_combo)
         status_row.addWidget(self.archive_combo)
+        status_row.addWidget(self.favorite_combo)
+        status_row.addWidget(self.tag_combo)
+        status_row.addWidget(self.sort_combo)
         status_row.addStretch(1)
 
         form.addRow("关键字", keyword_row)
@@ -244,10 +413,14 @@ class LibraryPage(QWidget):
             Qt.TextInteractionFlag.TextSelectableByMouse
         )
         detail_layout.addWidget(self.detail_label)
-        self.note_label = QLabel("")
-        self.note_label.setObjectName("Muted")
-        self.note_label.setWordWrap(True)
-        detail_layout.addWidget(self.note_label)
+        note_caption = QLabel("备注")
+        note_caption.setObjectName("Muted")
+        detail_layout.addWidget(note_caption)
+        self.note_edit = QLineEdit()
+        self.note_edit.setPlaceholderText("为这条录制添加备注")
+        detail_layout.addWidget(self.note_edit)
+        self.btn_save_note = QPushButton("保存备注")
+        detail_layout.addWidget(self.btn_save_note)
         detail_layout.addStretch(1)
         self.btn_probe = QPushButton("提取媒体信息")
         self.btn_probe.setToolTip("在后台重新读取时长、分辨率与编码，并生成缩略图")
@@ -269,6 +442,10 @@ class LibraryPage(QWidget):
         self.btn_open_dir.clicked.connect(self._open_selected_folder)
         self.btn_open_file.clicked.connect(self._open_selected_file)
         self.btn_probe.clicked.connect(self._probe_selected)
+        self.btn_favorite.clicked.connect(self._toggle_favorite)
+        self.btn_tags.clicked.connect(self._edit_tags)
+        self.btn_profile.clicked.connect(self._edit_profile)
+        self.btn_save_note.clicked.connect(self._save_note)
         self.table.itemSelectionChanged.connect(self._update_detail)
         self.scan_finished.connect(self._on_scan_finished)
         if self._media_service is not None:
@@ -276,16 +453,44 @@ class LibraryPage(QWidget):
 
     # ---------- 查询 ----------
     def current_query(self) -> RecordingQuery:
+        favorite_value = str(self.favorite_combo.currentData() or "")
+        favorite = None
+        if favorite_value == "yes":
+            favorite = True
+        elif favorite_value == "no":
+            favorite = False
+        tag_id = int(self.tag_combo.currentData() or 0)
         return RecordingQuery(
             keyword=self.keyword_edit.text().strip(),
             date_from=self.date_from_edit.text().strip(),
             date_to=self.date_to_edit.text().strip(),
             status=str(self.status_combo.currentData() or ""),
             archive_status=str(self.archive_combo.currentData() or ""),
+            favorite=favorite,
+            tag_ids=(tag_id,) if tag_id > 0 else (),
+            sort_by=str(self.sort_combo.currentData() or "newest"),
             limit=1000,
         )
 
+    def _reload_tag_filter(self) -> None:
+        current = int(self.tag_combo.currentData() or 0)
+        try:
+            tags = self._service.list_tags()
+        except Exception:  # noqa: BLE001 - 标签读取失败不影响主检索
+            logger.warning("读取标签失败", exc_info=True)
+            return
+        self.tag_combo.blockSignals(True)
+        self.tag_combo.clear()
+        self.tag_combo.addItem("全部标签", 0)
+        for tag in tags:
+            self.tag_combo.addItem(str(tag.get("name") or ""), int(tag["id"]))
+        index = self.tag_combo.findData(current)
+        if index >= 0:
+            self.tag_combo.setCurrentIndex(index)
+        self.tag_combo.blockSignals(False)
+
     def reload(self) -> None:
+        self._reload_tag_filter()
         query = self.current_query()
         try:
             self._rows = self._service.search(query)
@@ -316,6 +521,13 @@ class LibraryPage(QWidget):
         self._update_detail()
 
     def _populate(self, rows: list[dict]) -> None:
+        try:
+            tag_map = self._service.recording_tag_map(
+                [int(row["id"]) for row in rows if row.get("id") is not None]
+            )
+        except Exception:  # noqa: BLE001 - 标签展示失败不影响录制列表
+            logger.warning("读取录制标签失败", exc_info=True)
+            tag_map = {}
         self.table.setRowCount(len(rows))
         for row_index, row in enumerate(rows):
             values = (
@@ -331,13 +543,20 @@ class LibraryPage(QWidget):
                 _ARCHIVE_LABELS.get(
                     row.get("archive_status") or "", row.get("archive_status") or "--"
                 ),
+                "★" if row.get("favorite") else "",
                 str(row.get("archive_path") or row.get("file_path") or "--"),
             )
             for column, text in enumerate(values):
                 item = QTableWidgetItem(text)
                 if column == 0:
                     item.setData(Qt.ItemDataRole.UserRole, row.get("id"))
+                if column == 8 and text:
+                    item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                    item.setToolTip("已收藏")
                 self.table.setItem(row_index, column, item)
+            names = tag_map.get(int(row["id"])) if row.get("id") is not None else None
+            if names:
+                self.table.item(row_index, 1).setToolTip("标签：" + "、".join(names))
 
     def selected_recording_ids(self) -> list[int]:
         ids: list[int] = []
@@ -359,11 +578,17 @@ class LibraryPage(QWidget):
     # ---------- 详情与媒体信息 ----------
     def _update_detail(self) -> None:
         row = self._selected_row()
+        has_selection = row is not None
+        self.btn_favorite.setEnabled(has_selection)
+        self.btn_tags.setEnabled(has_selection)
+        self.btn_profile.setEnabled(has_selection)
+        self.note_edit.setEnabled(has_selection)
+        self.btn_save_note.setEnabled(has_selection)
         if row is None:
             self.preview_label.setText("暂无封面")
             self.preview_label.setPixmap(QPixmap())
             self.detail_label.setText("选择一条录制查看详情")
-            self.note_label.setText("")
+            self.note_edit.clear()
             return
 
         resolution = "--"
@@ -403,10 +628,27 @@ class LibraryPage(QWidget):
         ]
         if row.get("metadata_error"):
             lines.append(f"提示：{row['metadata_error']}")
+        try:
+            tags = self._service.get_recording_tags(int(row["id"]))
+        except Exception:  # noqa: BLE001 - 标签读取失败不影响详情
+            logger.warning("读取录制标签失败", exc_info=True)
+            tags = []
+        lines.append("标签：" + ("、".join(str(tag.get("name")) for tag in tags) or "--"))
+        room_id = row.get("room_id")
+        if room_id is not None:
+            try:
+                profile = self._service.get_anchor_profile(int(room_id))
+            except Exception:  # noqa: BLE001
+                profile = None
+            if profile and (profile.get("bio") or profile.get("note")):
+                lines.append(
+                    "主播档案：" + "；".join(
+                        value for value in (profile.get("bio"), profile.get("note")) if value
+                    )
+                )
         self.detail_label.setText("\n".join(lines))
 
-        note = (row.get("note") or "").strip()
-        self.note_label.setText(f"备注：{note}" if note else "备注：--")
+        self.note_edit.setText(str(row.get("note") or ""))
         self.preview_label.setText("暂无封面")
         self.preview_label.setPixmap(QPixmap())
         thumbnail = row.get("thumbnail_path")
@@ -453,6 +695,114 @@ class LibraryPage(QWidget):
             self.status_label.setText(f"已提交媒体信息提取：#{recording_id}")
         else:
             self.status_label.setText(f"#{recording_id} 已在提取队列中")
+
+    # ---------- 资产组织 ----------
+    def _row_index(self, recording_id: int) -> int:
+        for index in range(self.table.rowCount()):
+            item = self.table.item(index, 0)
+            if item is not None and item.data(Qt.ItemDataRole.UserRole) == recording_id:
+                return index
+        return -1
+
+    def _toggle_favorite(self) -> None:
+        row = self._selected_row()
+        if row is None:
+            self.status_label.setText("请先选择一条录制记录")
+            return
+        recording_id = int(row["id"])
+        favorite = not bool(row.get("favorite"))
+        try:
+            updated = self._service.set_favorite(recording_id, favorite)
+        except Exception as exc:  # noqa: BLE001 - 失败必须可见
+            logger.exception("更新收藏状态失败")
+            self.status_label.setText(f"收藏状态更新失败：{exc}")
+            return
+        if not updated:
+            self.status_label.setText("收藏状态更新失败：记录不存在")
+            return
+        row["favorite"] = 1 if favorite else 0
+        index = self._row_index(recording_id)
+        if index >= 0:
+            item = self.table.item(index, 8)
+            if item is not None:
+                item.setText("★" if favorite else "")
+        self.status_label.setText(
+            f"#{recording_id} 已{'收藏' if favorite else '取消收藏'}"
+        )
+
+    def _save_note(self) -> None:
+        row = self._selected_row()
+        if row is None:
+            self.status_label.setText("请先选择一条录制记录")
+            return
+        recording_id = int(row["id"])
+        note = self.note_edit.text().strip()
+        try:
+            updated = self._service.set_note(recording_id, note)
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("保存备注失败")
+            self.status_label.setText(f"备注保存失败：{exc}")
+            return
+        if not updated:
+            self.status_label.setText("备注保存失败：记录不存在")
+            return
+        row["note"] = note
+        self.status_label.setText(f"#{recording_id} 备注已保存")
+
+    def _edit_tags(self) -> None:
+        row = self._selected_row()
+        if row is None:
+            self.status_label.setText("请先选择一条录制记录")
+            return
+        recording_id = int(row["id"])
+        try:
+            tags = self._service.list_tags()
+            selected = [
+                int(tag["id"]) for tag in self._service.get_recording_tags(recording_id)
+            ]
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("读取标签失败")
+            self.status_label.setText(f"读取标签失败：{exc}")
+            return
+        dialog = _TagDialog(self._service, tags, selected, self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        try:
+            self._service.set_recording_tags(recording_id, dialog.selected_tag_ids())
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("保存标签失败")
+            self.status_label.setText(f"保存标签失败：{exc}")
+            return
+        self._reload_tag_filter()
+        self._update_detail()
+        self.status_label.setText(f"#{recording_id} 标签已更新")
+
+    def _edit_profile(self) -> None:
+        row = self._selected_row()
+        if row is None or row.get("room_id") is None:
+            self.status_label.setText("请先选择一条有房间信息的录制记录")
+            return
+        room_id = int(row["room_id"])
+        try:
+            profile = self._service.get_anchor_profile(room_id)
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("读取主播档案失败")
+            self.status_label.setText(f"读取主播档案失败：{exc}")
+            return
+        dialog = _AnchorProfileDialog(profile, self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        avatar, bio, note = dialog.values()
+        try:
+            self._service.set_anchor_profile(
+                room_id, avatar_path=avatar, bio=bio, note=note
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("保存主播档案失败")
+            self.status_label.setText(f"保存主播档案失败：{exc}")
+            return
+        self._update_detail()
+        self.status_label.setText("主播档案已保存")
 
     # ---------- 打开文件 ----------
     def _open_selected_folder(self) -> None:

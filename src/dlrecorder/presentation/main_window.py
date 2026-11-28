@@ -41,6 +41,7 @@ from ..infrastructure.diagnostics import (
     default_filename,
 )
 from . import icons
+from .automation_page import AutomationPage
 from .library_page import LibraryPage
 from .notification_center import NotificationCenter
 from .pages import HistoryPage, LogsPage, RoomsPage, SettingsPage, Sidebar
@@ -63,11 +64,13 @@ logger = logging.getLogger(__name__)
 PAGE_ROOMS = 0
 PAGE_HISTORY = 1
 PAGE_LIBRARY = 2
-PAGE_LOGS = 3
-PAGE_SETTINGS = 4
+PAGE_AUTOMATION = 3
+PAGE_LOGS = 4
+PAGE_SETTINGS = 5
 
 
 class MainWindow(QMainWindow):
+    rule_notification = Signal(str, str)
     auto_record_toggled = Signal(bool)
     # 用户主动点击“停止录制”（区别于自动停止），用于抑制自动录制重新拉起
     recording_stop_requested = Signal(int)
@@ -194,6 +197,19 @@ class MainWindow(QMainWindow):
             no_library_layout.addWidget(no_library_label)
             no_library_layout.addStretch(1)
             self.pages.addWidget(no_library)
+        if self._database is not None:
+            self.automation_page: Optional[AutomationPage] = AutomationPage(self._database)
+        else:
+            self.automation_page = None
+            no_automation = QWidget()
+            no_automation_layout = QVBoxLayout(no_automation)
+            no_automation_label = QLabel("当前运行方式未启用自动化规则。")
+            no_automation_label.setObjectName("Muted")
+            no_automation_layout.addWidget(no_automation_label)
+            no_automation_layout.addStretch(1)
+        self.pages.addWidget(
+            self.automation_page if self.automation_page is not None else no_automation
+        )
         self.pages.addWidget(self.logs_page)
         self.pages.addWidget(
             self.settings_page if self.settings_page is not None else placeholder
@@ -211,6 +227,7 @@ class MainWindow(QMainWindow):
         self.setStatusBar(QStatusBar())
         self.statusBar().setSizeGripEnabled(False)
         self.status_label = QLabel("就绪")
+        self.rule_notification.connect(self._show_rule_notification)
         self.statusBar().addWidget(self.status_label, 1)
         self.summary_label = QLabel("")
         self.summary_label.setObjectName("Muted")
@@ -336,6 +353,9 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
     # 导航
     # ------------------------------------------------------------------
+    def _show_rule_notification(self, title: str, message: str) -> None:
+        self.status_label.setText(f"{title}：{message}")
+
     def _navigate(self, index: int) -> None:
         if index < 0 or index >= self.pages.count():
             return
@@ -345,6 +365,8 @@ class MainWindow(QMainWindow):
             self._refresh_history()
         elif index == PAGE_LIBRARY and self.library_page is not None:
             self.library_page.reload()
+        elif index == PAGE_AUTOMATION and self.automation_page is not None:
+            self.automation_page.reload()
         elif index == PAGE_SETTINGS and self.settings_page is not None:
             self.settings_page.sync_theme()
 

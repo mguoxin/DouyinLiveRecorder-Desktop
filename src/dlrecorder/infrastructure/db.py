@@ -18,6 +18,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional, Sequence
 
+from ..domain.automation_rules import RULE_TYPES
 from ..domain.models import Room
 from ..domain.recording_query import RecordingQuery
 from ..domain.states import RoomState
@@ -1499,17 +1500,50 @@ class Database:
         if query.max_size > 0:
             clauses.append("COALESCE(file_size, 0) <= ?")
             params.append(int(query.max_size))
+        if query.favorite is not None:
+            clauses.append("favorite = ?")
+            params.append(1 if query.favorite else 0)
+        if query.min_duration_s > 0:
+            clauses.append("COALESCE(duration_s, 0) >= ?")
+            params.append(float(query.min_duration_s))
+        if query.max_duration_s > 0:
+            clauses.append("COALESCE(duration_s, 0) <= ?")
+            params.append(float(query.max_duration_s))
+        tag_ids = [int(value) for value in query.tag_ids]
+        if tag_ids:
+            placeholders = ", ".join("?" for _ in tag_ids)
+            clauses.append(
+                "EXISTS (SELECT 1 FROM recording_tags AS rt "
+                f"WHERE rt.recording_id = recordings.id AND rt.tag_id IN ({placeholders}))"
+            )
+            params.extend(tag_ids)
         where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
         return where, params
 
+    _RECORDING_SORT_ORDERS = {
+        "newest": "id DESC",
+        "oldest": "id ASC",
+        "largest": "COALESCE(file_size, 0) DESC, id DESC",
+        "smallest": "COALESCE(file_size, 0) ASC, id DESC",
+        "longest": "COALESCE(duration_s, 0) DESC, id DESC",
+        "shortest": "COALESCE(duration_s, 0) ASC, id DESC",
+    }
+
+    @classmethod
+    def _recording_order_clause(cls, sort_by: str) -> str:
+        return cls._RECORDING_SORT_ORDERS.get(
+            (sort_by or "").strip().lower(), cls._RECORDING_SORT_ORDERS["newest"]
+        )
+
     def search_recordings(self, query: RecordingQuery) -> list[dict]:
-        """按条件检索录制记录（最近优先），全部使用参数化 SQL。"""
+        """按条件检索录制记录（默认最近优先），全部使用参数化 SQL。"""
         where, params = self._recording_query_clause(query)
+        order = self._recording_order_clause(query.sort_by)
         params.append(max(1, int(query.limit)))
         params.append(max(0, int(query.offset)))
         with self._lock:
             rows = self._get_conn().execute(
-                f"SELECT * FROM recordings{where} ORDER BY id DESC LIMIT ? OFFSET ?",
+                f"SELECT * FROM recordings{where} ORDER BY {order} LIMIT ? OFFSET ?",
                 params,
             ).fetchall()
         return [dict(row) for row in rows]
@@ -1628,6 +1662,348 @@ class Database:
             cur = self._get_conn().cursor()
             cur.execute(f"UPDATE recordings SET {', '.join(updates)} WHERE {where}", params)
             return cur.rowcount > 0
+
+    # ---------- 媒体资产组织（标签/收藏/备注/主播档案） ----------
+    def list_tags(self) -> list[dict]:
+        with self._lock:
+            rows = self._get_conn().execute(
+                "SELECT t.*, (SELECT COUNT(*) FROM recording_tags rt "
+                "WHERE rt.tag_id=t.id) AS usage_count "
+                "FROM tags AS t ORDER BY t.name COLLATE NOCASE"
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def create_tag(self, name: str, color: str = "") -> int:
+        """创建标签；同名标签已存在时直接复用，不重复插入。"""
+        text = (name or "").strip()
+        if not text:
+            raise ValueError("标签名称不能为空")
+        with self._lock:
+            cur = self._get_conn().cursor()
+            cur.execute(
+                "INSERT INTO tags(name, color, created_at) VALUES (?, ?, ?) "
+                "ON CONFLICT(name) DO NOTHING",
+                (text, (color or "").strip(), _now_iso()),
+            )
+            row = cur.execute("SELECT id FROM tags WHERE name=?", (text,)).fetchone()
+        return int(row["id"])
+
+    def delete_tag(self, tag_id: int) -> bool:
+        with self._lock:
+            cur = self._get_conn().cursor()
+            cur.execute("DELETE FROM tags WHERE id=?", (int(tag_id),))
+            return cur.rowcount > 0
+
+    def set_recording_tags(self, recording_id: int, tag_ids: Sequence[int]) -> None:
+        """整体替换某条录制的标签集合（事务内完成）。"""
+        unique_ids = list(dict.fromkeys(int(value) for value in tag_ids))
+        conn = self._get_conn()
+        with self._lock:
+            cur = conn.cursor()
+            cur.execute("BEGIN IMMEDIATE")
+            try:
+                cur.execute(
+                    "DELETE FROM recording_tags WHERE recording_id=?",
+                    (int(recording_id),),
+                )
+                now = _now_iso()
+                cur.executemany(
+                    "INSERT INTO recording_tags(recording_id, tag_id, created_at)"
+                    " VALUES (?, ?, ?)",
+                    [(int(recording_id), tag_id, now) for tag_id in unique_ids],
+                )
+                conn.commit()
+            except Exception:
+                if conn.in_transaction:
+                    conn.rollback()
+                raise
+
+    def get_recording_tags(self, recording_id: int) -> list[dict]:
+        with self._lock:
+            rows = self._get_conn().execute(
+                "SELECT t.* FROM tags AS t "
+                "JOIN recording_tags AS rt ON rt.tag_id=t.id "
+                "WHERE rt.recording_id=? ORDER BY t.name COLLATE NOCASE",
+                (int(recording_id),),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def recording_tag_map(self, recording_ids: Sequence[int]) -> dict[int, list[str]]:
+        """批量返回录制对应的标签名称，供列表展示。"""
+        ids = [int(value) for value in dict.fromkeys(recording_ids)]
+        if not ids:
+            return {}
+        placeholders = ", ".join("?" for _ in ids)
+        with self._lock:
+            rows = self._get_conn().execute(
+                "SELECT rt.recording_id AS recording_id, t.name AS name "
+                "FROM recording_tags AS rt JOIN tags AS t ON t.id=rt.tag_id "
+                f"WHERE rt.recording_id IN ({placeholders}) "
+                "ORDER BY t.name COLLATE NOCASE",
+                ids,
+            ).fetchall()
+        result: dict[int, list[str]] = {}
+        for row in rows:
+            result.setdefault(int(row["recording_id"]), []).append(row["name"])
+        return result
+
+    def set_recording_favorite(self, recording_id: int, favorite: bool) -> bool:
+        with self._lock:
+            cur = self._get_conn().cursor()
+            cur.execute(
+                "UPDATE recordings SET favorite=? WHERE id=?",
+                (1 if favorite else 0, int(recording_id)),
+            )
+            return cur.rowcount > 0
+
+    def set_recording_note(self, recording_id: int, note: str) -> bool:
+        with self._lock:
+            cur = self._get_conn().cursor()
+            cur.execute(
+                "UPDATE recordings SET note=? WHERE id=?",
+                ((note or "").strip(), int(recording_id)),
+            )
+            return cur.rowcount > 0
+
+    def get_anchor_profile(self, room_id: int) -> Optional[dict]:
+        with self._lock:
+            row = self._get_conn().execute(
+                "SELECT * FROM anchor_profiles WHERE room_id=?", (int(room_id),)
+            ).fetchone()
+        return dict(row) if row is not None else None
+
+    def set_anchor_profile(
+        self,
+        room_id: int,
+        *,
+        avatar_path: Any = _UNSET,
+        bio: Any = _UNSET,
+        note: Any = _UNSET,
+    ) -> None:
+        """按字段增量更新主播档案；不存在时创建。"""
+        existing = self.get_anchor_profile(room_id) or {}
+        now = _now_iso()
+        avatar = existing.get("avatar_path") if avatar_path is _UNSET else avatar_path
+        bio_value = existing.get("bio", "") if bio is _UNSET else (bio or "").strip()
+        note_value = existing.get("note", "") if note is _UNSET else (note or "").strip()
+        with self._lock:
+            self._get_conn().execute(
+                "INSERT INTO anchor_profiles("
+                "room_id, avatar_path, bio, note, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT(room_id) DO UPDATE SET "
+                "avatar_path=excluded.avatar_path, bio=excluded.bio, "
+                "note=excluded.note, updated_at=excluded.updated_at",
+                (
+                    int(room_id),
+                    avatar,
+                    bio_value,
+                    note_value,
+                    existing.get("created_at") or now,
+                    now,
+                ),
+            )
+
+    def list_anchor_profiles(self) -> list[dict]:
+        with self._lock:
+            rows = self._get_conn().execute(
+                "SELECT p.*, r.web_rid, r.display_name FROM anchor_profiles AS p "
+                "LEFT JOIN rooms AS r ON r.id=p.room_id ORDER BY p.updated_at DESC"
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    # ---------- 自动化规则 ----------
+    def list_automation_rules(
+        self,
+        *,
+        room_id: Optional[int] = None,
+        enabled_only: bool = False,
+    ) -> list[dict]:
+        clauses: list[str] = []
+        params: list[Any] = []
+        if room_id is not None:
+            clauses.append("(room_id=? OR room_id IS NULL)")
+            params.append(int(room_id))
+        if enabled_only:
+            clauses.append("enabled=1")
+        where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+        with self._lock:
+            rows = self._get_conn().execute(
+                f"SELECT * FROM automation_rules{where} "
+                "ORDER BY priority ASC, id ASC",
+                params,
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def get_automation_rule(self, rule_id: int) -> Optional[dict]:
+        with self._lock:
+            row = self._get_conn().execute(
+                "SELECT * FROM automation_rules WHERE id=?", (int(rule_id),)
+            ).fetchone()
+        return dict(row) if row is not None else None
+
+    def create_automation_rule(
+        self,
+        *,
+        name: str,
+        rule_type: str,
+        config: dict,
+        room_id: Optional[int] = None,
+        enabled: bool = True,
+        priority: int = 100,
+    ) -> int:
+        if rule_type not in RULE_TYPES:
+            raise ValueError(f"非法规则类型: {rule_type}")
+        text = (name or "").strip()
+        if not text:
+            raise ValueError("规则名称不能为空")
+        import json
+
+        now = _now_iso()
+        with self._lock:
+            cur = self._get_conn().cursor()
+            cur.execute(
+                "INSERT INTO automation_rules("
+                "room_id, name, rule_type, enabled, priority, config, "
+                "created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    int(room_id) if room_id is not None else None,
+                    text,
+                    rule_type,
+                    1 if enabled else 0,
+                    int(priority),
+                    json.dumps(config or {}, ensure_ascii=False),
+                    now,
+                    now,
+                ),
+            )
+            return int(cur.lastrowid)
+
+    def update_automation_rule(
+        self,
+        rule_id: int,
+        *,
+        name: Any = _UNSET,
+        enabled: Any = _UNSET,
+        priority: Any = _UNSET,
+        config: Any = _UNSET,
+        room_id: Any = _UNSET,
+    ) -> bool:
+        updates: list[str] = []
+        params: list[Any] = []
+        if name is not _UNSET:
+            text = str(name or "").strip()
+            if not text:
+                raise ValueError("规则名称不能为空")
+            updates.append("name=?")
+            params.append(text)
+        if enabled is not _UNSET:
+            updates.append("enabled=?")
+            params.append(1 if enabled else 0)
+        if priority is not _UNSET:
+            updates.append("priority=?")
+            params.append(int(priority))
+        if config is not _UNSET:
+            import json
+
+            updates.append("config=?")
+            params.append(json.dumps(config or {}, ensure_ascii=False))
+        if room_id is not _UNSET:
+            updates.append("room_id=?")
+            params.append(int(room_id) if room_id is not None else None)
+        if not updates:
+            return False
+        updates.append("updated_at=?")
+        params.append(_now_iso())
+        params.append(int(rule_id))
+        with self._lock:
+            cur = self._get_conn().cursor()
+            cur.execute(
+                f"UPDATE automation_rules SET {', '.join(updates)} WHERE id=?", params
+            )
+            return cur.rowcount > 0
+
+    def delete_automation_rule(self, rule_id: int) -> bool:
+        with self._lock:
+            cur = self._get_conn().cursor()
+            cur.execute("DELETE FROM automation_rules WHERE id=?", (int(rule_id),))
+            return cur.rowcount > 0
+
+    def create_rule_run(
+        self,
+        rule_id: int,
+        room_id: Optional[int],
+        *,
+        status: str = "running",
+        message: str = "",
+    ) -> int:
+        if status not in {"running", "succeeded", "failed", "skipped"}:
+            raise ValueError(f"非法规则执行状态: {status}")
+        now = _now_iso()
+        finished = None if status == "running" else now
+        with self._lock:
+            cur = self._get_conn().cursor()
+            cur.execute(
+                "INSERT INTO rule_runs("
+                "rule_id, room_id, status, started_at, finished_at, message, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (
+                    int(rule_id),
+                    int(room_id) if room_id is not None else None,
+                    status,
+                    now,
+                    finished,
+                    (message or "")[:500] or None,
+                    now,
+                ),
+            )
+            return int(cur.lastrowid)
+
+    def finish_rule_run(self, run_id: int, status: str, message: str = "") -> bool:
+        if status not in {"succeeded", "failed", "skipped"}:
+            raise ValueError(f"非法规则结束状态: {status}")
+        with self._lock:
+            cur = self._get_conn().cursor()
+            cur.execute(
+                "UPDATE rule_runs SET status=?, finished_at=?, message=? "
+                "WHERE id=? AND status='running'",
+                (status, _now_iso(), (message or "")[:500] or None, int(run_id)),
+            )
+            return cur.rowcount > 0
+
+    def list_rule_runs(
+        self,
+        *,
+        rule_id: Optional[int] = None,
+        status: Optional[str] = None,
+        limit: int = 100,
+    ) -> list[dict]:
+        clauses: list[str] = []
+        params: list[Any] = []
+        if rule_id is not None:
+            clauses.append("rule_id=?")
+            params.append(int(rule_id))
+        if status:
+            clauses.append("status=?")
+            params.append(status)
+        where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+        params.append(max(1, int(limit)))
+        with self._lock:
+            rows = self._get_conn().execute(
+                f"SELECT * FROM rule_runs{where} ORDER BY id DESC LIMIT ?", params
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def mark_stale_rule_runs(self, message: str) -> int:
+        """把上次异常退出遗留的 running 执行记录标记为失败。"""
+        with self._lock:
+            cur = self._get_conn().cursor()
+            cur.execute(
+                "UPDATE rule_runs SET status='failed', finished_at=?, message=? "
+                "WHERE status='running'",
+                (_now_iso(), (message or "")[:500] or None),
+            )
+            return cur.rowcount
 
     # ---------- 归档状态（recordings） ----------
     def set_recording_archive(

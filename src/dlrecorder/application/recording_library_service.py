@@ -73,6 +73,54 @@ class RecordingLibraryService:
     def storage_stats(self) -> dict:
         return self._db.recording_storage_stats()
 
+    # ---------- 资产组织 ----------
+    def list_tags(self) -> list[dict]:
+        return self._db.list_tags()
+
+    def create_tag(self, name: str, color: str = "") -> int:
+        return self._db.create_tag(name, color)
+
+    def delete_tag(self, tag_id: int) -> bool:
+        return self._db.delete_tag(tag_id)
+
+    def get_recording_tags(self, recording_id: int) -> list[dict]:
+        return self._db.get_recording_tags(recording_id)
+
+    def recording_tag_map(self, recording_ids: Iterable[int]) -> dict[int, list[str]]:
+        return self._db.recording_tag_map(list(recording_ids))
+
+    def set_recording_tags(self, recording_id: int, tag_ids: Iterable[int]) -> None:
+        self._db.set_recording_tags(recording_id, tuple(tag_ids))
+
+    def set_favorite(self, recording_id: int, favorite: bool) -> bool:
+        return self._db.set_recording_favorite(recording_id, favorite)
+
+    def set_note(self, recording_id: int, note: str) -> bool:
+        return self._db.set_recording_note(recording_id, note)
+
+    def get_anchor_profile(self, room_id: int) -> Optional[dict]:
+        return self._db.get_anchor_profile(room_id)
+
+    def list_anchor_profiles(self) -> list[dict]:
+        return self._db.list_anchor_profiles()
+
+    def set_anchor_profile(
+        self,
+        room_id: int,
+        *,
+        avatar_path: Optional[str] = None,
+        bio: Optional[str] = None,
+        note: Optional[str] = None,
+    ) -> None:
+        updates: dict[str, Optional[str]] = {}
+        if avatar_path is not None:
+            updates["avatar_path"] = avatar_path
+        if bio is not None:
+            updates["bio"] = bio
+        if note is not None:
+            updates["note"] = note
+        self._db.set_anchor_profile(room_id, **updates)
+
     def disk_usage(self) -> dict[str, Optional[dict[str, int]]]:
         """返回录制目录与归档目录所在卷的总量/可用字节。"""
         result: dict[str, Optional[dict[str, int]]] = {}

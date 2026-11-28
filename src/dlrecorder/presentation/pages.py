@@ -96,6 +96,7 @@ class Sidebar(QWidget):
             ("rooms", "直播间"),
             ("history", "录制历史"),
             ("history", "录制库"),
+            ("shield", "自动化"),
             ("logs", "运行日志"),
             ("settings", "设置"),
         )
