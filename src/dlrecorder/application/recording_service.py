@@ -38,6 +38,7 @@ from ..infrastructure.ffmpeg import (
 from ..infrastructure.orphan import cleanup_orphans
 from ..infrastructure.process_registry import ProcessRecord, ProcessRegistry
 from ..infrastructure.winproc import KillOnCloseJob, query_process
+from .recording_metrics import SegmentMetrics
 
 logger = logging.getLogger(__name__)
 
@@ -91,6 +92,10 @@ class _ActiveRecording:
     pending_stream_url: Optional[str] = None
     # 续录新分段已启动但尚未确认写入：首次观察到文件增长后才发恢复事件。
     recovered_pending: bool = False
+    # P1-04 指标：仅内存，每秒由 _poll_active 采样，不写库。
+    metrics: Optional[SegmentMetrics] = None
+    session_bytes: int = 0
+    session_segments: int = 0
 
 
 def _safe_component(text: str, limit: int = 40) -> str:
@@ -214,6 +219,33 @@ class RecordingService(QObject):
     def active_rooms(self) -> list[int]:
         with self._active_lock:
             return sorted(self._active)
+
+    def metrics_snapshot(self, room_id: int) -> Optional[dict]:
+        """返回房间实时录制指标的只读拷贝；未录制时返回 None。
+
+        供 UI 以 1 Hz 主动拉取，不新增逐房间信号；锁持有时间 O(1)。
+        """
+        with self._active_lock:
+            active = self._active.get(room_id)
+        if active is None or active.metrics is None:
+            return None
+        now = time.monotonic()
+        reconnecting = active.process is None
+        snapshot = active.metrics.snapshot(
+            now,
+            room_id=room_id,
+            status="reconnecting" if reconnecting else "recording",
+            session_bytes=(
+                active.session_bytes
+                + (0 if reconnecting else active.metrics.last_size)
+            ),
+            session_segments=active.session_segments,
+            attempts=active.attempts,
+            max_attempts=self._reconnect_max_attempts,
+        )
+        payload = snapshot.as_dict()
+        payload["file_path"] = str(active.file_path)
+        return payload
 
     @property
     def output_dir(self) -> Path:
@@ -519,6 +551,7 @@ class RecordingService(QObject):
             display_name=room.display_name,
             last_size=0,
             last_growth_at=time.monotonic(),
+            metrics=SegmentMetrics(now=time.monotonic()),
         )
         with self._active_lock:
             self._active[room_id] = active
@@ -610,6 +643,8 @@ class RecordingService(QObject):
                 )
                 continue
             size = file_size(active.file_path)
+            if active.metrics is not None:
+                active.metrics.observe(now, size)
             if size > active.last_size:
                 active.last_size = size
                 active.last_growth_at = now
@@ -873,6 +908,10 @@ class RecordingService(QObject):
         active.display_name = room.display_name
         active.last_size = 0
         active.last_growth_at = time.monotonic()
+        if active.metrics is None:
+            active.metrics = SegmentMetrics(now=time.monotonic())
+        else:
+            active.metrics.reset_segment(time.monotonic())
         active.recovered_pending = True
         self._register_process(active)
         logger.info(
@@ -991,6 +1030,8 @@ class RecordingService(QObject):
     ) -> None:
         """结束一个录制分段：更新数据库并发出 recording_finished。"""
         size = file_size(active.file_path)
+        active.session_bytes += max(0, size)
+        active.session_segments += 1
         status = RecordingStatus.COMPLETED
         if error:
             status = RecordingStatus.FAILED

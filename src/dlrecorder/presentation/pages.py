@@ -2,9 +2,9 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
-from PySide6.QtCore import QSize, Qt, Signal
+from PySide6.QtCore import QSize, Qt, QTimer, Signal
 from PySide6.QtWidgets import (
     QApplication,
     QButtonGroup,
@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
 from .. import __version__
 from ..application.settings_service import AppSettings, SettingsService
 from . import icons
+from .metrics_panel import MetricsPanel
 from .theme import LIGHT, ThemeManager, ThemeTokens
 from .widgets import (
     EmptyState,
@@ -268,6 +269,14 @@ class RoomsPage(QWidget):
         content_layout.addWidget(self.stack)
         layout.addWidget(content_card, 1)
 
+        self.metrics_panel = MetricsPanel()
+        self.metrics_panel.hide()
+        layout.addWidget(self.metrics_panel)
+        self._metrics_provider: Optional[Callable[[int], Optional[dict]]] = None
+        self._metrics_timer = QTimer(self)
+        self._metrics_timer.setInterval(1000)
+        self._metrics_timer.timeout.connect(self._refresh_metrics)
+
         hint = QLabel("双击房间可编辑，右键查看更多操作。录制文件不会被自动删除。")
         hint.setObjectName("Muted")
         layout.addWidget(hint)
@@ -302,11 +311,48 @@ class RoomsPage(QWidget):
         if room_id is None:
             self.selection_label.setText("选择直播间后可执行操作")
             self.selection_label.setToolTip("")
+            # 清空选中后重置面板状态：下次选中默认展开。
+            self.metrics_panel.set_collapsed(False)
+            self.metrics_panel.hide()
+            self._metrics_timer.stop()
         else:
             name = self.room_list.selected_display_name()
             self.selection_label.setText(f"已选择：{name}")
             self.selection_label.setToolTip(name)
+            if not self.metrics_panel.isVisible():
+                self.metrics_panel.set_collapsed(False)
+                self.metrics_panel.show()
+            self._refresh_metrics()
+            if self.isVisible():
+                self._metrics_timer.start()
         self.selection_changed.emit()
+
+    def set_metrics_provider(
+        self, provider: Optional[Callable[[int], Optional[dict]]]
+    ) -> None:
+        """注入指标查询函数（通常是 RecordingService.metrics_snapshot）。"""
+        self._metrics_provider = provider
+        self._refresh_metrics()
+
+    def _refresh_metrics(self) -> None:
+        room_id = self.room_list.selected_room_id()
+        if room_id is None or self._metrics_provider is None:
+            self.metrics_panel.update_metrics(None)
+            return
+        try:
+            self.metrics_panel.update_metrics(self._metrics_provider(room_id))
+        except Exception:  # noqa: BLE001 - 指标异常不得影响列表
+            self.metrics_panel.update_metrics(None)
+
+    def showEvent(self, event) -> None:  # noqa: N802 - Qt 命名
+        super().showEvent(event)
+        if self.room_list.selected_room_id() is not None:
+            self._refresh_metrics()
+            self._metrics_timer.start()
+
+    def hideEvent(self, event) -> None:  # noqa: N802 - Qt 命名
+        super().hideEvent(event)
+        self._metrics_timer.stop()
 
     def set_action_state(
         self, has_selection: bool, monitoring: bool, recording: bool
@@ -361,6 +407,7 @@ class RoomsPage(QWidget):
         self.room_list.set_theme_tokens(tokens)
         self.empty_state.set_theme_tokens(tokens)
         self.chk_auto_record.set_theme_tokens(tokens)
+        self.metrics_panel.apply_theme(tokens)
         self.btn_add.setIcon(icons.icon("add", "#FFFFFF", 16))
         self.btn_open_dir.setIcon(icons.icon("folder", tokens.text_secondary, 16))
         self.btn_edit.setIcon(icons.icon("edit", tokens.text_secondary, 16))

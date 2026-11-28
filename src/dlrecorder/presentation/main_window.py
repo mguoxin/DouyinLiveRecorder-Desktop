@@ -148,6 +148,8 @@ class MainWindow(QMainWindow):
         self.pages = QStackedWidget()
         self.pages.setObjectName("ContentRoot")
         self.rooms_page = RoomsPage(self._auto_record)
+        if self._recording is not None:
+            self.rooms_page.set_metrics_provider(self._recording.metrics_snapshot)
         self.history_page = HistoryPage()
         self.library_page: Optional[LibraryPage] = None
         if self._database is not None:
