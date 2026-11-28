@@ -19,12 +19,16 @@
 - 数据库 Schema v3→v4：`recordings` 新增 11 个媒体资产字段，新增 `tags`、`recording_tags`、`anchor_profiles`、`automation_rules`、`rule_runs` 表与索引；V3→V4 与 V1→V4 链式迁移，迁移前自动备份、事务内升级、提交后校验、失败回滚。
 - 应用启动时恢复未完成的媒体探测与“执行中”规则记录（标记失败，保证历史可信）。
 - 录制完成后并行触发媒体探测、规则后处理与归档（探测在源文件被清理时回退归档副本）。
+- 录制库与统计页表格列宽策略调整：长文本列吸收剩余宽度并省略显示，修复 1280 及以下窗口宽度的横向溢出（提交 `8ec6c55`）。
+- 最小窗口尺寸由 900×600 提升到 1024×640，避免统计卡片与页头按钮在过窄窗口被裁剪（提交 `b348ab9`）。
 
 ### 验证状态
 
-- 自动化回归：**566 passed / 0 failed / 0 skipped**（Windows 11，Python 3.12.16）。
-- 打包候选：`DouyinLiveRecorder-v1.0.0-candidate.zip`（109,699,513 字节，SHA-256 `B59250227EBE51D7CBF283121F6555416FB3BB78913EFF485FA9DBB914A40C96`），完成 11 步 Mock 闭环与 3 分钟 soak（RSS +0.1 MB，退出码 0）。
-- 未验证项与风险在 `docs/releases/v1.0.0/V1.0.0-DELIVERY-REPORT.md` 的“未解决问题/发布风险”章节如实列出。
+- 自动化回归：**566 passed / 0 failed / 0 skipped**（Windows 11，Python 3.12.16；三轮执行：302.89s / 276.66s / 288.50s）。
+- 当前候选包（审计修复后重建）：`DouyinLiveRecorder-v1.0.0-candidate-r3.zip`（109,699,573 字节，SHA-256 `58615189E9B9E720BC732F4E983A21AD4AF8857667F378F0C87E15CDB4E0F4B7`），完成 11 步 Mock 闭环（强杀续录 2 段、重启保留、两次退出码 0）。
+- 中间构建 r2 保留备查：109,700,554 字节，SHA-256 `FD4282931F83021EC570C2B468DF7D0AAC953A9D0B0859CA64B406FC15C74901`。
+- 修复前候选包保留备查：`DouyinLiveRecorder-v1.0.0-candidate.zip`（109,699,513 字节，SHA-256 `B59250227EBE51D7CBF283121F6555416FB3BB78913EFF485FA9DBB914A40C96`）。
+- 未验证项与风险在 `docs/releases/v1.0.0/FINAL-RELEASE-AUDIT.md` 与 `V1.0.0-DELIVERY-REPORT.md` 中如实列出。
 
 ## [0.5.0] - 候选（2026-11-28）
 
