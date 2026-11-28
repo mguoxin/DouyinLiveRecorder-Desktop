@@ -32,6 +32,7 @@ from ..application.monitor_service import MonitorService
 from ..application.recording_library_service import RecordingLibraryService
 from ..application.recording_service import RecordingService
 from ..application.settings_service import AppSettings, SettingsService
+from ..application.statistics_service import StatisticsService
 from ..domain.models import validate_web_rid
 from ..infrastructure.backup import prepare_restore, verify_sqlite
 from ..infrastructure.db import Database
@@ -43,6 +44,7 @@ from ..infrastructure.diagnostics import (
 from . import icons
 from .automation_page import AutomationPage
 from .library_page import LibraryPage
+from .stats_page import StatsPage
 from .notification_center import NotificationCenter
 from .pages import HistoryPage, LogsPage, RoomsPage, SettingsPage, Sidebar
 from .theme import ThemeManager
@@ -65,8 +67,9 @@ PAGE_ROOMS = 0
 PAGE_HISTORY = 1
 PAGE_LIBRARY = 2
 PAGE_AUTOMATION = 3
-PAGE_LOGS = 4
-PAGE_SETTINGS = 5
+PAGE_STATS = 4
+PAGE_LOGS = 5
+PAGE_SETTINGS = 6
 
 
 class MainWindow(QMainWindow):
@@ -210,6 +213,30 @@ class MainWindow(QMainWindow):
         self.pages.addWidget(
             self.automation_page if self.automation_page is not None else no_automation
         )
+        self.stats_page: Optional[StatsPage] = None
+        if self._database is not None:
+            fallback_dir = self._database.db_path.parent / "recordings"
+            if self._recording is not None:
+                recordings_dir_provider = lambda: self._recording.output_dir
+            else:
+                recordings_dir_provider = lambda: fallback_dir
+            self.stats_service = StatisticsService(
+                self._database,
+                recordings_dir_provider=recordings_dir_provider,
+                archive_dir_provider=lambda: self._archive_dir()
+                if callable(self._archive_dir)
+                else self._database.db_path.parent / "archive",
+                thumbnails_dir=self._database.db_path.parent / "thumbnails",
+            )
+            self.stats_page = StatsPage(self.stats_service)
+        else:
+            no_stats = QWidget()
+            no_stats_layout = QVBoxLayout(no_stats)
+            no_stats_label = QLabel("当前运行方式未启用统计。")
+            no_stats_label.setObjectName("Muted")
+            no_stats_layout.addWidget(no_stats_label)
+            no_stats_layout.addStretch(1)
+        self.pages.addWidget(self.stats_page if self.stats_page is not None else no_stats)
         self.pages.addWidget(self.logs_page)
         self.pages.addWidget(
             self.settings_page if self.settings_page is not None else placeholder
@@ -367,6 +394,8 @@ class MainWindow(QMainWindow):
             self.library_page.reload()
         elif index == PAGE_AUTOMATION and self.automation_page is not None:
             self.automation_page.reload()
+        elif index == PAGE_STATS and self.stats_page is not None:
+            self.stats_page.reload()
         elif index == PAGE_SETTINGS and self.settings_page is not None:
             self.settings_page.sync_theme()
 

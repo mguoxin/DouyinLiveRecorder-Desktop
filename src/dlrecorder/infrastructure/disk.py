@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import shutil
 from pathlib import Path
 from typing import Optional
@@ -45,3 +46,35 @@ def free_space_mb(path: Path) -> Optional[float]:
         return None
     _warned_paths.discard(str(path))
     return usage.free / (1024 * 1024)
+
+
+def directory_size_bytes(path: Path, *, max_files: int = 20000) -> int:
+    """统计目录占用字节数；只读遍历，失败条目跳过。
+
+    ``max_files`` 用于避免超大目录导致统计无限期占用 UI；达到上限后返回
+    已统计部分，调用方可在报告中标注为近似值。
+    """
+    root = Path(path)
+    if not root.is_dir():
+        return 0
+    total = 0
+    seen = 0
+    stack = [str(root)]
+    while stack and seen < max_files:
+        current = stack.pop()
+        try:
+            with os.scandir(current) as entries:
+                for entry in entries:
+                    try:
+                        if entry.is_dir(follow_symlinks=False):
+                            stack.append(entry.path)
+                        elif entry.is_file(follow_symlinks=False):
+                            total += entry.stat(follow_symlinks=False).st_size
+                            seen += 1
+                            if seen >= max_files:
+                                break
+                    except OSError:
+                        continue
+        except OSError:
+            continue
+    return total

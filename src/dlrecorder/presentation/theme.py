@@ -164,6 +164,11 @@ QLabel#SectionTitle {
     font-weight: 600;
     color: $text;
 }
+QLabel#MetricValue {
+    font-size: 16px;
+    font-weight: 600;
+    color: $text;
+}
 QLabel#Muted {
     color: $text_muted;
 }

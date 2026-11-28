@@ -2005,6 +2005,105 @@ class Database:
             )
             return cur.rowcount
 
+    # ---------- 统计 ----------
+    @property
+    def schema_version(self) -> int:
+        with self._lock:
+            row = self._get_conn().execute(
+                "SELECT MAX(version) FROM schema_version"
+            ).fetchone()
+        return int(row[0]) if row and row[0] is not None else 0
+
+    def recording_summary(self, *, day: str, month: str) -> dict:
+        with self._lock:
+            conn = self._get_conn()
+            row = conn.execute(
+                "SELECT COUNT(*) AS total, "
+                "COALESCE(SUM(CASE WHEN status='completed' THEN 1 ELSE 0 END), 0) AS completed, "
+                "COALESCE(SUM(CASE WHEN status IN ('failed', 'interrupted') THEN 1 ELSE 0 END), 0) AS failed, "
+                "COALESCE(SUM(CASE WHEN status='recording' THEN 1 ELSE 0 END), 0) AS active, "
+                "COALESCE(SUM(file_size), 0) AS bytes, "
+                "COALESCE(SUM(duration_s), 0) AS duration_s "
+                "FROM recordings"
+            ).fetchone()
+            today = conn.execute(
+                "SELECT COUNT(*) AS total, "
+                "COALESCE(SUM(CASE WHEN status='completed' THEN 1 ELSE 0 END), 0) AS completed, "
+                "COALESCE(SUM(file_size), 0) AS bytes "
+                "FROM recordings WHERE substr(started_at, 1, 10)=?",
+                (day,),
+            ).fetchone()
+            this_month = conn.execute(
+                "SELECT COUNT(*) AS total, "
+                "COALESCE(SUM(CASE WHEN status='completed' THEN 1 ELSE 0 END), 0) AS completed, "
+                "COALESCE(SUM(file_size), 0) AS bytes "
+                "FROM recordings WHERE substr(started_at, 1, 7)=?",
+                (month,),
+            ).fetchone()
+            rooms = conn.execute("SELECT COUNT(*) FROM rooms").fetchone()[0]
+        return {
+            "total": int(row["total"]),
+            "completed": int(row["completed"]),
+            "failed": int(row["failed"]),
+            "active": int(row["active"]),
+            "bytes": int(row["bytes"]),
+            "duration_s": float(row["duration_s"]),
+            "rooms": int(rooms),
+            "today": dict(today),
+            "month": dict(this_month),
+        }
+
+    def daily_recording_stats(self, *, since_day: str, limit: int = 90) -> list[dict]:
+        with self._lock:
+            rows = self._get_conn().execute(
+                "SELECT substr(started_at, 1, 10) AS day, COUNT(*) AS total, "
+                "COALESCE(SUM(CASE WHEN status='completed' THEN 1 ELSE 0 END), 0) AS completed, "
+                "COALESCE(SUM(CASE WHEN status IN ('failed', 'interrupted') THEN 1 ELSE 0 END), 0) AS failed, "
+                "COALESCE(SUM(file_size), 0) AS bytes, "
+                "COALESCE(SUM(duration_s), 0) AS duration_s "
+                "FROM recordings WHERE substr(started_at, 1, 10) >= ? "
+                "GROUP BY day ORDER BY day DESC LIMIT ?",
+                (since_day, max(1, int(limit))),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def monthly_recording_stats(self, *, since_month: str, limit: int = 24) -> list[dict]:
+        with self._lock:
+            rows = self._get_conn().execute(
+                "SELECT substr(started_at, 1, 7) AS month, COUNT(*) AS total, "
+                "COALESCE(SUM(CASE WHEN status='completed' THEN 1 ELSE 0 END), 0) AS completed, "
+                "COALESCE(SUM(CASE WHEN status IN ('failed', 'interrupted') THEN 1 ELSE 0 END), 0) AS failed, "
+                "COALESCE(SUM(file_size), 0) AS bytes, "
+                "COALESCE(SUM(duration_s), 0) AS duration_s "
+                "FROM recordings WHERE substr(started_at, 1, 7) >= ? "
+                "GROUP BY month ORDER BY month DESC LIMIT ?",
+                (since_month, max(1, int(limit))),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def anchor_recording_stats(self, *, limit: int = 100) -> list[dict]:
+        with self._lock:
+            rows = self._get_conn().execute(
+                "SELECT room_id, "
+                "MAX(web_rid_snapshot) AS web_rid, "
+                "MAX(display_name_snapshot) AS display_name, "
+                "COUNT(*) AS total, "
+                "COALESCE(SUM(CASE WHEN status='completed' THEN 1 ELSE 0 END), 0) AS completed, "
+                "COALESCE(SUM(file_size), 0) AS bytes, "
+                "MAX(started_at) AS last_started "
+                "FROM recordings GROUP BY room_id ORDER BY bytes DESC LIMIT ?",
+                (max(1, int(limit)),),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def recording_failure_stats(self) -> list[dict]:
+        with self._lock:
+            rows = self._get_conn().execute(
+                "SELECT status, COUNT(*) AS total FROM recordings "
+                "WHERE status != 'completed' GROUP BY status ORDER BY total DESC"
+            ).fetchall()
+        return [dict(row) for row in rows]
+
     # ---------- 归档状态（recordings） ----------
     def set_recording_archive(
         self,
