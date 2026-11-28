@@ -9,11 +9,11 @@
 | 项 | 当前状态 | 证据 |
 | --- | --- | --- |
 | 源码版本 | **0.4.2（候选）**；正式发布版仍为 **v0.4.1** | `pyproject.toml`、`src/dlrecorder/__init__.py`、EXE 版本资源 `0.4.2.0` |
-| 整改分支 | `fix/v0.4.2-remediation-4` = `688147b`（领先 v0.4.1 共 14 个提交，已推送 `origin`，未合并） | `git log v0.4.1..HEAD` |
+| 整改分支 | `fix/v0.4.2-remediation-4`（已推送 `origin`，未合并）：代码与构建源 `688147b`（相对 v0.4.1 共 14 个提交），其后 `606ac26` 起为文档/验收记录提交 | `git log v0.4.1..HEAD` |
 | 标签 | `v0.1.0`～`v0.4.1` 共 7 个；**无 v0.4.2 标签** | `git tag` |
 | 数据库 | SQLite Schema V2，本轮未变更 | `infrastructure/db.py` |
-| 全量回归 | **415 passed / 0 failed / 0 skipped**（2026-11-28，HEAD `688147b`） | 本地 `pytest -q`；`_audit/r4_delivery/` |
-| 远端 CI | GitHub Actions `pytest (Windows, Python 3.12)`：**success**（run 46104506413，head `688147b`） | GitHub API / Actions 页面 |
+| 全量回归 | **415 passed / 0 failed / 0 skipped**（2026-11-28，代码 HEAD `688147b`） | 本地 `pytest -q`；`_audit/r4_delivery/` |
+| 远端 CI | GitHub Actions `pytest (Windows, Python 3.12)`：**success**（run 46104506413 @ `688147b`；run 46106958791 @ `606ac26`） | GitHub Actions |
 | 候选包 | `dist/DouyinLiveRecorder-v0.4.2-candidate-r4.zip`，109,139,779 字节，SHA-256 `38EF9A0A23EACA3C4BFA0DF883B169CCC74D366B5FDDCC23AA2ECF0A8112B9FB` | `_audit/r4_delivery/evidence/package_sha256.txt` |
 | 打包闭环 | 11 步本地合成流全部通过（添加/监控/录制/强杀续录/停止/退出/重启） | `_audit/r4_delivery/evidence/e2e_run.log` |
 | 稳定性 | 30 分钟打包程序观察：30 次采样、0 停滞、0 错误、退出码 0、无残留 FFmpeg；文件 50,294,136 B 与 DB 一致 | `_audit/r4_delivery/evidence/soak_run.log`、`soak_db.json` |
